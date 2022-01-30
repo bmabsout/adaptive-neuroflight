@@ -1,6 +1,8 @@
 {
 
   description = "A reproducible environment for learning certifiable controllers";
+  nixConfig.extra-substituters = [ https://bmabsout.cachix.org ];
+  nixConfig.extra-trusted-public-keys = "bmabsout.cachix.org-1:/GhCEayGQ3NHMIlJiUelQrLtHHXVdGjHtyDz32xNAo4=";
 
   inputs = {
     flake-utils.url = "github:numtide/flake-utils";
