@@ -32,7 +32,7 @@ import tensorflow as tf
 
 from tf_agents.agents.sac import sac_agent
 from tf_agents.agents.sac import tanh_normal_projection_network
-from tf_agents.environments import suite_mujoco
+from tf_agents.environments import suite_gym
 from tf_agents.keras_layers import inner_reshape
 from tf_agents.metrics import py_metrics
 from tf_agents.networks import nest_map
@@ -180,8 +180,8 @@ def train_eval(
     summarize_grads_and_vars=False):
   """Trains and evaluates SAC."""
   logging.info('Training SAC on: %s', env_name)
-  collect_env = suite_mujoco.load(env_name)
-  eval_env = suite_mujoco.load(env_name)
+  collect_env = suite_gym.load(env_name)
+  eval_env = suite_gym.load(env_name)
 
   _, action_tensor_spec, time_step_tensor_spec = (
       spec_utils.get_tensor_specs(collect_env))

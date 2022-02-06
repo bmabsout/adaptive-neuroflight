@@ -10,6 +10,7 @@
     mach-nix.url = github:DavHau/mach-nix;
     nixGL.url = github:guibou/nixGL;
     nixGL.flake = false;
+    nix-ros-overlay.url = "github:lopsided98/nix-ros-overlay?rev=7c93de09a75e0d1fc6c510fe60dd5f3c769640fb";
   };
 
   outputs = inputs:
@@ -41,6 +42,7 @@
             _.box2d-py = { nativeBuildInputs.add = with pkgs; [ swig ]; }; 
           providers = {
             gym="nixpkgs";
+            mpi4py="nixpkgs";
           };
 
             requirements=''
@@ -48,16 +50,15 @@
               tk
               matplotlib
               future
-              tf_agents[reverb]
               tensorflow
               scipy
               gym
+              mpi4py
               tqdm
               mypy
               noise
               joblib
               pylint
-              cpprb
               tensorflow-probability
               tensorflow-addons
             '';
@@ -72,6 +73,7 @@
       in {
         devShell = pkgs.mkShell {
           buildInputs=[
+            inputs.nix-ros-overlay.legacyPackages.x86_64-linux.noetic.gazebo
             vscodium-with-extensions
             python-with-deps
             nixGLIntelScript
