@@ -173,7 +173,7 @@ def ddpg(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(), seed=0,
         with tf.GradientTape() as tape:
             pi = act_limit * pi_network(obs)
             q_pi = tf.squeeze(q_network(tf.concat([obs, pi], axis=-1)), axis=1)
-            pi_loss = -tf.reduce_mean(q_pi)*(1.0-tf.reduce_mean(pi_network.losses))
+            pi_loss = -tf.reduce_mean(q_pi) #*(1.0-tf.reduce_mean(pi_network.losses))
         grads = tape.gradient(pi_loss, pi_network.trainable_variables)
         grads_and_vars = zip(grads, pi_network.trainable_variables)
         pi_optimizer.apply_gradients(grads_and_vars)

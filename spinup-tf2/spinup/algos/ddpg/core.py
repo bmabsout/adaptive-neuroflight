@@ -6,12 +6,12 @@ def mlp_functional(input_shape, hidden_sizes=(32,), activation='tanh', output_ac
     inputs = tf.keras.Input(input_shape)
     layer=inputs
     for hidden_size in hidden_sizes[:-1]:
-        layer = tf.keras.layers.Dense(units=hidden_size, activation=activation, use_bias=use_bias)(layer)
+        layer = tf.keras.layers.Dense(units=hidden_size, activation=activation)(layer)
     outputs = tf.keras.layers.Dense(
         units=hidden_sizes[-1],
         activation=output_activation,
         use_bias=use_bias,
-        activity_regularizer=regularizers.l2(1e-3)
+        # activity_regularizer=regularizers.l2(1e-4)
     )(layer)
     return tf.keras.Model(inputs=inputs, outputs=outputs)
 
