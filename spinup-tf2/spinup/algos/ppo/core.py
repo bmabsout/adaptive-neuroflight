@@ -78,7 +78,7 @@ class Mlp_Gaussian_Actor_Critic(tf.keras.Model):
     super(Mlp_Gaussian_Actor_Critic, self).__init__()
     self.act_dim=ac_space.shape[-1]
     with tf.name_scope('pi'):
-      self.actor_mlp = mlp(ob_space=ob_space, hidden_sizes=list((256,256))+[self.act_dim], activation=activation)
+      self.actor_mlp = mlp(ob_space=ob_space, hidden_sizes=list((64,64))+[self.act_dim], activation=activation)
     with tf.name_scope('v'):
       self.critic_mlp = mlp(ob_space=ob_space, hidden_sizes=list(hidden_sizes)+[1], activation=activation)
       self.critic_mlp.log_std = self.add_weight(name='log_std', shape=(self.act_dim,), initializer=tf.initializers.constant(-0.5))
