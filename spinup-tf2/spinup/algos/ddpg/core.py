@@ -1,6 +1,5 @@
 import numpy as np
 import tensorflow as tf
-from tensorflow.keras import regularizers
 
 def mlp_functional(input_shape, hidden_sizes=(32,), activation='tanh', output_activation=None, use_bias=True):
     inputs = tf.keras.Input(input_shape)
@@ -11,7 +10,6 @@ def mlp_functional(input_shape, hidden_sizes=(32,), activation='tanh', output_ac
         units=hidden_sizes[-1],
         activation=output_activation,
         use_bias=use_bias,
-        activity_regularizer=regularizers.l2(1e-4)
     )(layer)
     return tf.keras.Model(inputs=inputs, outputs=outputs)
 
@@ -28,10 +26,10 @@ def mlp(input_shape, hidden_sizes=(32,), activation='tanh', output_activation=No
 """
 Actor-Critics
 """
-def mlp_actor_critic(obs_dim, act_dim, hidden_sizes=(64,64), activation='relu', 
+def mlp_actor_critic(obs_dim, act_dim, actor_hidden_sizes=(64,64), critic_hidden_sizes=(256,256), activation='tanh', 
                      output_activation='tanh'):
-    with tf.name_scope('pi'):
-        pi_network = mlp((obs_dim,), list(hidden_sizes)+[act_dim], activation, output_activation)
-    with tf.name_scope('q'):
-        q_network = mlp((obs_dim+act_dim,), list(hidden_sizes)+[1], activation, None)
+    # with tf.name_scope('pi'):
+    pi_network = mlp_functional((obs_dim,), list(actor_hidden_sizes)+[act_dim], activation, output_activation, use_bias=False)
+    # with tf.name_scope('q'):
+    q_network = mlp_functional((obs_dim+act_dim,), list(critic_hidden_sizes)+[1], activation, "relu")
     return pi_network, q_network

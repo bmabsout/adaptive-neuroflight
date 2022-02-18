@@ -13,6 +13,6 @@ o = env.reset()
 for i in range(20000):
 	a = pretty_please.predict(np.array([o]))[0]
 	o, r, d, info = env.step(a)
-	env.render()
+	#env.render()
 	print(o, r, info)
-	# print("action:", a)
+	print("action:", a)

@@ -41,10 +41,10 @@ class ReplayBuffer:
 Deep Deterministic Policy Gradient (DDPG)
 
 """
-def ddpg(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(), seed=0, 
-         steps_per_epoch=5000, epochs=100, replay_size=int(1e6), gamma=0.99, 
+def ddpg(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs={"actor_hidden_sizes":[32,32], "critic_hidden_sizes":[400,300]}, seed=0, 
+         steps_per_epoch=5000, epochs=100, replay_size=int(1e5), gamma=0.9, 
          polyak=0.995, pi_lr=1e-3, q_lr=1e-3, batch_size=100, start_steps=10000, 
-         act_noise=0.1, max_ep_len=1000, logger_kwargs=dict(), save_freq=1):
+         act_noise=0.1, max_ep_len=1000, logger_kwargs=dict(), save_freq=1, on_save=lambda *_:()):
     """
 
     Args:
@@ -119,7 +119,7 @@ def ddpg(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(), seed=0,
     tf.random.set_seed(seed)
     np.random.seed(seed)
 
-    env, test_env = env_fn(), env_fn()
+    env = env_fn()
     obs_dim = env.observation_space.shape[0]
     act_dim = env.action_space.shape[0]
 
@@ -173,11 +173,14 @@ def ddpg(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(), seed=0,
         with tf.GradientTape() as tape:
             pi = act_limit * pi_network(obs)
             q_pi = tf.squeeze(q_network(tf.concat([obs, pi], axis=-1)), axis=1)
-            pi_loss = -tf.reduce_mean(q_pi) #*(1.0-tf.reduce_mean(pi_network.losses))
+            max_q_val = 1/(1-gamma)
+            increase_q_val = 1.0 - max_q_val/(max_q_val + tf.reduce_mean(q_pi))
+            avoid_extremes = (tf.reduce_mean((1.0 - tf.abs(pi))**0.15))**0.1
+            pi_loss = 1.0-(increase_q_val**10.0)*avoid_extremes
         grads = tape.gradient(pi_loss, pi_network.trainable_variables)
         grads_and_vars = zip(grads, pi_network.trainable_variables)
         pi_optimizer.apply_gradients(grads_and_vars)
-        return pi_loss
+        return pi_loss, avoid_extremes, increase_q_val
 
     def get_action(o, noise_scale):
         a = act_limit * pi_network(tf.constant(o.reshape(1,-1))).numpy()[0]
@@ -185,14 +188,18 @@ def ddpg(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(), seed=0,
         return np.clip(a, -act_limit, act_limit)
 
     def test_agent(n=10):
+        print("testing agents")
+        sum_step_return = 0
         for j in range(n):
-            o, r, d, ep_ret, ep_len = test_env.reset(), 0, False, 0, 0
+            o, r, d, ep_ret, ep_len = env.reset(), 0, False, 0, 0
             while not(d or (ep_len == max_ep_len)):
                 # Take deterministic actions at test time (noise_scale=0)
-                o, r, d, _ = test_env.step(get_action(o, 0))
+                o, r, d, _ = env.step(get_action(o, 0))
                 ep_ret += r
                 ep_len += 1
-            logger.store(TestEpRet=ep_ret, TestEpLen=ep_len)
+            # logger.store(TestEpRet=ep_ret, TestEpLen=ep_len)
+            sum_step_return += ep_ret/ep_len
+        return sum_step_return/n
 
     start_time = time.time()
     o, r, d, ep_ret, ep_len = env.reset(), 0, False, 0, 0
@@ -246,8 +253,8 @@ def ddpg(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(), seed=0,
                 logger.store(LossQ=outs[0].numpy(), QVals=outs[1].numpy())
 
                 # Policy update
-                outs = pi_update(obs1)
-                logger.store(LossPi=outs.numpy())
+                pi_loss, avoid_extremes, increase_q_val = pi_update(obs1)
+                logger.store(LossPi=pi_loss.numpy(), NormQ=increase_q_val, AvoidExtremes=avoid_extremes)
 
                 # target update
                 target_update()
@@ -261,7 +268,7 @@ def ddpg(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(), seed=0,
 
             # Save model
             if (epoch % save_freq == 0) or (epoch == epochs-1):
-                pi_network.save("pretty_please")
+                on_save(pi_network, epoch//save_freq)
             #     logger.save_state({'env': env}, None)
 
             # Test the performance of the deterministic version of the agent.
@@ -277,6 +284,8 @@ def ddpg(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(), seed=0,
             logger.log_tabular('QVals', with_min_and_max=True)
             logger.log_tabular('LossPi', average_only=True)
             logger.log_tabular('LossQ', average_only=True)
+            logger.log_tabular('NormQ', average_only=True)
+            logger.log_tabular('AvoidExtremes', average_only=True)
             logger.log_tabular('Time', time.time()-start_time)
             logger.log_tabular('Reg loss', tf.reduce_mean(pi_network.losses))
             logger.dump_tabular()
