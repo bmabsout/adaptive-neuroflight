@@ -9,7 +9,9 @@ class PendulumEnv(gym.Env):
     metadata = {"render.modes": [
         "human", "rgb_array"], "video.frames_per_second": 30}
 
-    def __init__(self, g=10.0):
+    def __init__(self, g=10.0, color=(0.8, 0.3, 0.3), setpoint=0.0):
+        self.setpoint = setpoint
+        self.color = color
         self.max_speed = 8
         self.max_torque = 2.0
         self.dt = 0.05
@@ -41,8 +43,8 @@ class PendulumEnv(gym.Env):
 
         u = np.clip(u, -self.max_torque, self.max_torque)[0]
         self.last_u = u  # for rendering
-        angle_rw = 1.0 - (angle_normalize(th)/np.pi) ** 2.0
-        thdot_rw = 1.0 - (thdot/self.max_speed)**2.0
+        angle_rw = 1.0 - normed_angular_distance(th, self.setpoint)
+        thdot_rw = 1.0 - np.abs(thdot/self.max_speed)
         rw = (angle_rw*thdot_rw)**0.5
 
         newthdot = thdot + (3 * g / (2 * l) * np.sin(th) +
@@ -70,7 +72,7 @@ class PendulumEnv(gym.Env):
             self.viewer = rendering.Viewer(500, 500)
             self.viewer.set_bounds(-2.2, 2.2, -2.2, 2.2)
             rod = rendering.make_capsule(1, 0.2)
-            rod.set_color(0.8, 0.3, 0.3)
+            rod.set_color(*self.color)
             self.pole_transform = rendering.Transform()
             rod.add_attr(self.pole_transform)
             self.viewer.add_geom(rod)
@@ -95,5 +97,6 @@ class PendulumEnv(gym.Env):
             self.viewer = None
 
 
-def angle_normalize(x):
-    return ((x + np.pi) % (2 * np.pi)) - np.pi
+def normed_angular_distance(a, b):
+    diff = ( b - a + np.pi ) % (2 * np.pi) - np.pi
+    return  np.abs(diff + 2*np.pi if diff < -np.pi else diff)/np.pi
