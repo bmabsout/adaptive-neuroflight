@@ -3,7 +3,7 @@
   description = "A reproducible environment for learning certifiable controllers";
   nixConfig.extra-substituters = [ https://bmabsout.cachix.org ];
   nixConfig.extra-trusted-public-keys = "bmabsout.cachix.org-1:/GhCEayGQ3NHMIlJiUelQrLtHHXVdGjHtyDz32xNAo4=";
-
+  
   inputs = {
     flake-utils.url = "github:numtide/flake-utils";
     nixpkgs.url = "nixpkgs/02336c5c5f719cd6bd4cfc5a091a1ccee6f06b1d";
@@ -12,7 +12,7 @@
     nixGL.flake = false;
     nix-ros-overlay.url = "github:lopsided98/nix-ros-overlay?rev=7c93de09a75e0d1fc6c510fe60dd5f3c769640fb";
   };
-
+  
   outputs = inputs:
     inputs.flake-utils.lib.eachDefaultSystem (system:
       let pkgs = (import (inputs.nixpkgs) { config = {allowUnfree = true;}; system =
@@ -43,6 +43,7 @@
           providers = {
             gym="nixpkgs";
             mpi4py="nixpkgs";
+            pyglet="nixpkgs";
           };
 
             requirements=''
@@ -54,11 +55,13 @@
               scipy
               gym
               mpi4py
+              pyglet
               tqdm
               mypy
               noise
               joblib
               pylint
+              pip
               tensorflow-probability
               tensorflow-addons
             '';
@@ -72,6 +75,7 @@
         '';
       in {
         devShell = pkgs.mkShell {
+          PYTHONPATH="/home/iggybibi/Documents/adaptive-neuroflight/spinup-tf2";
           buildInputs=[
             inputs.nix-ros-overlay.legacyPackages.x86_64-linux.noetic.gazebo
             vscodium-with-extensions
