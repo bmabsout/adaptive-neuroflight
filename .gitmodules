@@ -1,0 +1,3 @@
+[submodule "neuroflight"]
+	path = neuroflight
+	url = https://github.com/bmabsout/neuroflight.git

@@ -1,7 +1,7 @@
 {
 
   description = "A reproducible environment for learning certifiable controllers";
-  nixConfig.extra-substituters = [ https://bmabsout.cachix.org ];
+  nixConfig.extra-substituters = [ https://bmabsout.cachix.org/ ];
   nixConfig.extra-trusted-public-keys = "bmabsout.cachix.org-1:/GhCEayGQ3NHMIlJiUelQrLtHHXVdGjHtyDz32xNAo4=";
   
   inputs = {
@@ -10,7 +10,7 @@
     mach-nix.url = github:DavHau/mach-nix;
     nixGL.url = github:guibou/nixGL;
     nixGL.flake = false;
-    nix-ros-overlay.url = "github:lopsided98/nix-ros-overlay?rev=7c93de09a75e0d1fc6c510fe60dd5f3c769640fb";
+    #nix-ros-overlay.url = "github:lopsided98/nix-ros-overlay?rev=7c93de09a75e0d1fc6c510fe60dd5f3c769640fb";
   };
   
   outputs = inputs:
@@ -34,7 +34,7 @@
           };
 
           vscodium-with-extensions = pkgs.vscode-with-extensions.override {
-            vscode = pkgs.vscodium;
+            vscode = pkgs.vscode-fhs;
             vscodeExtensions = extensions;
           };
           
@@ -61,6 +61,9 @@
               noise
               joblib
               pylint
+              pyserial
+              tqdm
+              crccheck
               pip
               tensorflow-probability
               tensorflow-addons
@@ -75,9 +78,9 @@
         '';
       in {
         devShell = pkgs.mkShell {
-          PYTHONPATH="/home/iggybibi/Documents/adaptive-neuroflight/spinup-tf2";
+          PYTHONPATH="/data/neuroflight/CODE/adaptive-neuroflight/spinup-tf2";
           buildInputs=[
-            inputs.nix-ros-overlay.legacyPackages.x86_64-linux.noetic.gazebo
+            #inputs.nix-ros-overlay.legacyPackages.x86_64-linux.noetic.gazebo
             vscodium-with-extensions
             python-with-deps
             nixGLIntelScript

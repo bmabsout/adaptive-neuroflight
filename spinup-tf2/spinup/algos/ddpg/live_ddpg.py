@@ -8,6 +8,69 @@ from spinup.algos.ddpg import core
 from spinup.utils.logx import EpochLogger
 
 
+def with_importance(x, importance):
+    return (x-importance)/(1.0-importance)
+
+def geo(l, axis):
+    return np.exp(np.mean(np.log(l), axis=axis))
+
+def p_mean(l, p, slack=0.0): # generalized mean
+    slacked = np.array(l) + slack
+    if(len(slacked.shape) == 1): #enforce having batches
+        slacked = np.array([slacked])
+    batch_size = slacked.shape[0]
+    res = np.zeros(batch_size)
+    handle_zeros = (slacked > 1e-20).all(axis=1) if p <=1e-20 else np.full(batch_size, True)
+
+    res[handle_zeros] = (
+        geo(slacked[handle_zeros], axis=1)
+        if np.abs(p) <= 1e-20 # geometric mean case
+        else np.mean(slacked[handle_zeros]**p, axis=1)**(1.0/p)
+    ) - slack
+    return res.squeeze()
+
+def to_positive(r):
+    return np.clip(1-r,0,1)
+
+
+def closeness_rw(true_error):
+    return p_mean(to_positive(np.tanh(np.abs(true_error)/100)),0)
+    # return to_positive(np.mean(np.abs(true_error/600)**3.0)**0.10)
+
+def acc_rw(motor_acc):
+    return p_mean(to_positive(np.abs(motor_acc)),0)
+
+def avoid_extremes_rw(action):
+    return stats.gmean((1.0 - np.abs(action))+1e-5)-1e-5
+
+
+def unroll_rpy(rpy):
+    return np.array([rpy.roll, rpy.pitch, rpy.yaw])
+
+def unroll_act(act):
+    return np.array([
+        act.bottom_right,
+        act.top_right,
+        act.bottom_left,
+        act.top_left
+    ])
+
+def unroll_obs(obs):
+    return np.concatenate([
+        unroll_rpy(obs.error),
+        unroll_rpy(obs.ang_vel),
+        unroll_rpy(obs.ang_acc),
+        unroll_act(obs.prev_action)
+    ])
+
+
+def rewards_fn(obs, act):
+    motor_acc = unroll_act(obs.prev_action) - unroll_act(act)
+    acc = acc_rw(motor_acc)
+    closeness = closeness_rw(unroll_rpy(obs.error))
+    return p_mean([closeness, acc], 0)
+
+
 class ReplayBuffer:
     """
     A simple FIFO experience replay buffer for DDPG agents.
@@ -43,51 +106,37 @@ class HyperParams:
             ac_kwargs={"actor_hidden_sizes":(32,32), "critic_hidden_sizes":(400,300)},
             seed=int(time.time()* 1e5) % int(1e6),
             steps_per_epoch=5000,
-            epochs=100,
             replay_size=int(1e5),
             gamma=0.9,
             polyak=0.995,
             pi_lr=1e-3,
             q_lr=1e-3,
             batch_size=100,
-            start_steps=10000,
-            act_noise=0.1,
-            max_ep_len=1000,
             train_every=100,
             train_steps=100,
         ):
         self.ac_kwargs = ac_kwargs
         self.seed = seed
         self.steps_per_epoch = steps_per_epoch
-        self.epochs = epochs
         self.replay_size = replay_size
         self.gamma = gamma
         self.polyak = polyak
         self.pi_lr = pi_lr
         self.q_lr = q_lr
         self.batch_size = batch_size
-        self.start_steps = start_steps
-        self.act_noise = act_noise
-        self.max_ep_len = max_ep_len
         self.train_every = train_every
         self.train_steps = train_steps
-
-
-@tf.function
-def with_importance(x, importance):
-    return (x-importance)/(1.0-importance)
     
 """
 
 Deep Deterministic Policy Gradient (DDPG)
 
 """
-def ddpg(env_fn, hp: HyperParams=HyperParams(),actor_critic=core.mlp_actor_critic, logger_kwargs=dict(), save_freq=1, on_save=lambda *_:(), safety_q=None):
+def live_ddpg(obs_queue, obs_space, act_space, hp: HyperParams=HyperParams(),actor_critic=core.mlp_actor_critic, logger_kwargs=dict(), save_freq=1, on_save=lambda *_:(), safety_q=None):
     """
 
     Args:
-        env_fn : A function which creates a copy of the environment.
-            The environment must satisfy the OpenAI Gym API.
+        obs_queue : a queue containing (observation1, action, observation2) objects
 
         actor_critic: A function which takes in placeholder symbols 
             for state, ``x_ph``, and action, ``a_ph``, and returns the main 
@@ -158,20 +207,19 @@ def ddpg(env_fn, hp: HyperParams=HyperParams(),actor_critic=core.mlp_actor_criti
     tf.random.set_seed(hp.seed)
     np.random.seed(hp.seed)
 
-    env = env_fn()
-    obs_dim = env.observation_space.shape[0]
-    act_dim = env.action_space.shape[0]
+    obs_dim = obs_space.shape[0]
+    act_dim = act_space.shape[0]
     max_q_val = 1.0/(1.0-hp.gamma)
 
     # Main outputs from computation graph
     with tf.name_scope('main'):
-        pi_network, q_network = actor_critic(env.observation_space, env.action_space, **hp.ac_kwargs)
+        pi_network, q_network = actor_critic(obs_space, act_space, **hp.ac_kwargs)
     
     # Target networks
     with tf.name_scope('target'):
         # Note that the action placeholder going to actor_critic here is 
         # irrelevant, because we only need q_targ(s, pi_targ(s)).
-        pi_targ_network, q_targ_network  = actor_critic(env.observation_space, env.action_space, **hp.ac_kwargs)
+        pi_targ_network, q_targ_network  = actor_critic(obs_space, act_space, **hp.ac_kwargs)
 
     # make sure network and target network is using the same weights
     pi_targ_network.set_weights(pi_network.get_weights())
@@ -198,8 +246,8 @@ def ddpg(env_fn, hp: HyperParams=HyperParams(),actor_critic=core.mlp_actor_criti
             q = tf.squeeze(q_network(tf.concat([obs1, acts], axis=-1)), axis=1)
             pi_targ = pi_targ_network(obs2)
             q_pi_targ = tf.squeeze(q_targ_network(tf.concat([obs2, pi_targ], axis=-1)), axis=1)
-            backup = tf.stop_gradient(rews/max_q_val + (1 - d)*hp.gamma * q_pi_targ)
-            q_loss = tf.reduce_mean((q-backup)**2) + sum(q_network.losses)*0.1
+            backup = tf.stop_gradient(rews/max_q_val + hp.gamma * q_pi_targ)
+            q_loss = tf.reduce_mean((q-backup)**2)
         grads = tape.gradient(q_loss, q_network.trainable_variables)
         grads_and_vars = zip(grads, q_network.trainable_variables)
         q_optimizer.apply_gradients(grads_and_vars)
@@ -214,75 +262,28 @@ def ddpg(env_fn, hp: HyperParams=HyperParams(),actor_critic=core.mlp_actor_criti
                 safe_q_pi = tf.reduce_mean(tf.squeeze(safety_q(tf.concat([obs, pi], axis=-1)), axis=-1))
             else:
                 safe_q_pi = 1.0
-            # tf.print("pi", pi[100])
-            # tf.print("extremes", 1.0 - extremes[100])
-            # extremes = (tf.maximum(tf.abs(pi), 0.9)-0.9)/0.11
+            extremes = (tf.maximum(tf.abs(pi), 0.9)-0.9)/0.11
 
-            avoid_extremes = tf.reduce_min(1.0 - tf.abs(pi)**2.0)
-            # tf.print("avoid_extremes", avoid_extremes)
-            # tf.print("q_pi", q_pi)
-            reg = sum(pi_network.losses)*0.01
-            pi_loss = 1.0 - q_pi*safe_q_pi + reg
+            avoid_extremes = tf.reduce_mean((1.0 - extremes))**0.2
+            pi_loss = 1.0 - (0.2+q_pi*safe_q_pi)*avoid_extremes
         grads = tape.gradient(pi_loss, pi_network.trainable_variables)
         grads_and_vars = zip(grads, pi_network.trainable_variables)
         pi_optimizer.apply_gradients(grads_and_vars)
-        return pi_loss, avoid_extremes, q_pi, safe_q_pi, reg
-
-    def get_action(o, noise_scale):
-        a = pi_network(tf.constant(o.reshape(1,-1))).numpy()[0]
-        a += noise_scale * np.random.randn(act_dim, ) * (env.action_space.high - env.action_space.low)/2.0 + (env.action_space.high + env.action_space.low)/2.0
-        return np.clip(a, env.action_space.low, env.action_space.high)
-
-    def test_agent(n=1):
-        print("testing agents")
-        sum_step_return = 0
-        for j in range(n):
-            o, r, d, ep_ret, ep_len = env.reset(), 0, False, 0, 0
-            while not(d or (ep_len == hp.max_ep_len)):
-                # Take deterministic actions at test time (noise_scale=0)
-                o, r, d, _ = env.step(get_action(o, 0))
-                ep_ret += r
-                ep_len += 1
-                env.render()
-            # logger.store(TestEpRet=ep_ret, TestEpLen=ep_len)
-            sum_step_return += ep_ret/ep_len
-        return sum_step_return/n
+        return pi_loss, avoid_extremes, q_pi, safe_q_pi
 
     start_time = time.time()
-    o, r, d, ep_ret, ep_len = env.reset(), 0, False, 0, 0
-    total_steps = hp.steps_per_epoch * hp.epochs
-
+    t = 0
     # Main loop: collect experience in env and update/log each epoch
-    for t in range(total_steps):
-
-        """
-        Until start_steps have elapsed, randomly sample actions
-        from a uniform distribution for better exploration. Afterwards, 
-        use the learned policy (with some noise, via act_noise). 
-        """
-        if t > hp.start_steps:
-            a = get_action(o, hp.act_noise)
-        else:
-            a = env.action_space.sample()
-
-        # Step the env
-        o2, r, d, _ = env.step(a)
-        ep_ret += r
-        ep_len += 1
-
-        # Ignore the "done" signal if it comes from hitting the time
-        # horizon (that is, when it's an artificial terminal signal
-        # that isn't based on the agent's state)
-        d = False if ep_len==hp.max_ep_len else d
-
+    while True:
+        (o, a, o2) = obs_queue.get()
+        t+=1
+        r = rewards_fn(o, a)
+        d = False
         # Store experience to replay buffer
-        replay_buffer.store(o, a, r, o2, d)
 
-        # Super critical, easy to overlook step: make sure to update 
-        # most recent observation!
-        o = o2
+        replay_buffer.store(unroll_obs(o), unroll_act(a), r, unroll_obs(o2), d)
 
-        if t > 0 and t % hp.train_every == 0:
+        if t % hp.train_every == 0:
             """
             Perform all DDPG updates at the end of the trajectory,
             in accordance with tuning done by TD3 paper authors.
@@ -296,71 +297,36 @@ def ddpg(env_fn, hp: HyperParams=HyperParams(),actor_critic=core.mlp_actor_criti
                 rews = tf.constant(batch['rews'])
                 dones = tf.constant(batch['done'])
                 # Q-learning update
-                loss_q, q_vals = q_update(obs1, obs2, acts, rews, dones)
-                logger.store(LossQ=loss_q)
+                outs = q_update(obs1, obs2, acts, rews, dones)
+                logger.store(LossQ=outs[0].numpy(), QVals=outs[1].numpy())
 
                 # Policy update
-                pi_loss, avoid_extremes, qs, safe_qs, reg = pi_update(obs1)
-                logger.store(
-                    LossPi=pi_loss.numpy(),
-                    NormQ=qs,
-                    NormSafe=safe_qs,
-                    AvoidExtremes=avoid_extremes,
-                    Reg=reg
-                )
+                pi_loss, avoid_extremes, qs, safe_qs = pi_update(obs1)
+                logger.store(LossPi=pi_loss.numpy(), NormQ=qs, NormSafe=safe_qs, AvoidExtremes=avoid_extremes)
 
                 # target update
                 target_update()
 
-        if d or (ep_len == hp.max_ep_len):
-            logger.store(EpRet=ep_ret, EpLen=ep_len)
-            o, r, d, ep_ret, ep_len = env.reset(), 0, False, 0, 0
-
         # End of epoch wrap-up
         if t > 0 and t % hp.steps_per_epoch == 0:
-            print(hp.steps_per_epoch)
             epoch = t // hp.steps_per_epoch
 
             # Save model
             if (epoch % save_freq == 0) or (epoch == hp.epochs-1):
-                on_save(pi_network, q_network, epoch//save_freq)
-            #     logger.save_state({'env': env}, None)
+                on_save(pi_targ_network, q_network, epoch//save_freq)
 
             # Test the performance of the deterministic version of the agent.
             # test_agent()
 
             # Log info about epoch
             logger.log_tabular('Epoch', epoch)
-            logger.log_tabular('EpRet', average_only=True)
-            # logger.log_tabular('TestEpRet', with_min_and_max=True)
-            logger.log_tabular('EpLen', average_only=True)
             # logger.log_tabular('TestEpLen', average_only=True)
             logger.log_tabular('TotalEnvInteracts', t)
+            logger.log_tabular('QVals', with_min_and_max=True)
             logger.log_tabular('LossPi', average_only=True)
             logger.log_tabular('LossQ', average_only=True)
             logger.log_tabular('NormQ', average_only=True)
             logger.log_tabular('NormSafe', average_only=True)
             logger.log_tabular('AvoidExtremes', average_only=True)
             logger.log_tabular('Time', time.time()-start_time)
-            logger.log_tabular('Reg', average_only=True)
             logger.dump_tabular()
-
-if __name__ == '__main__':
-    import argparse
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--env', type=str, default='HalfCheetah-v2')
-    parser.add_argument('--hid', type=int, default=300)
-    parser.add_argument('--l', type=int, default=2)
-    parser.add_argument('--gamma', type=float, default=0.99)
-    parser.add_argument('--seed', '-s', type=int, default=0)
-    parser.add_argument('--epochs', type=int, default=50)
-    parser.add_argument('--exp_name', type=str, default='ddpg')
-    args = parser.parse_args()
-
-    from spinup.utils.run_utils import setup_logger_kwargs
-    logger_kwargs = setup_logger_kwargs(args.exp_name, args.seed)
-
-    ddpg(lambda : gym.make(args.env), actor_critic=core.mlp_actor_critic,
-         ac_kwargs=dict(hidden_sizes=[args.hid]*args.l),
-         gamma=args.gamma, seed=args.seed, epochs=args.epochs,
-         logger_kwargs=logger_kwargs)
