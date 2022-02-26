@@ -123,7 +123,7 @@ if __name__ == '__main__':
         pi_lr=0.001, #tf.optimizers.schedules.PolynomialDecay(3e-4, 1e6, end_learning_rate=0),
         q_lr=0.001, #tf.optimizers.schedules.PolynomialDecay(3e-4, 1e6, end_learning_rate=0),
         batch_size=200,
-        act_noise=0.01,
+        act_noise=0.1,
         max_ep_len=10000,
         epochs=100
     )
