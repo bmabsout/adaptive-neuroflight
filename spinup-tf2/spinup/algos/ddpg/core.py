@@ -10,17 +10,17 @@ def mlp_functional(inputs, hidden_sizes=(32,), activation='relu', use_bias=True,
         layer = tf.keras.layers.Dense(
             units=hidden_size,
             activation=activation,
-            kernel_regularizer=regularizers.l1_l2(l1=1e-5, l2=1e-4),
-            bias_regularizer=regularizers.l2(1e-4),
-            activity_regularizer=regularizers.l2(1e-5)
+            kernel_regularizer=regularizers.l1_l2(l1=1e-6, l2=1e-5),
+            bias_regularizer=regularizers.l2(1e-5),
+            activity_regularizer=regularizers.l2(1e-6)
             #kernel_initializer=tf.keras.initializers.RandomUniform(minval=-glorot_limit, maxval=glorot_limit)
 #tf.keras.initializers.RandomNormal(stddev=0.001)
         )(layer)
    # glorot_limit = np.sqrt(6 / hidden_sizes[-1] + layer.shape[1])*1e-3
     outputs = tf.keras.layers.Dense(
         units=hidden_sizes[-1],
-        kernel_regularizer=regularizers.l1_l2(l1=1e-5, l2=1e-4),
-        bias_regularizer=regularizers.l2(1e-4),
+        kernel_regularizer=regularizers.l1_l2(l1=1e-6, l2=1e-5),
+        bias_regularizer=regularizers.l2(1e-5),
         activity_regularizer=regularizers.l2(output_reg),
         activation=output_activation,
         #kernel_initializer=tf.keras.initializers.RandomUniform(minval=-glorot_limit, maxval=glorot_limit),
@@ -42,7 +42,8 @@ def actor(obs_space, act_space, hidden_sizes):
     normalizer = 1.0/np.array([500.0, 500.0, 500.0, 500.0, 500.0, 500.0, 10.0, 10.0, 10.0, 1.0, 1.0, 1.0, 1.0])
     inputs = tf.keras.Input((obs_space.shape[0],))
     # unscaled = unscale_by_space(inputs, obs_space)
-    linear_output = mlp_functional(inputs*normalizer, hidden_sizes +(act_space.shape[0],),use_bias=False, output_activation=None, output_reg=1e-3)
+    linear_output = mlp_functional(inputs*normalizer, hidden_sizes +(act_space.shape[0],),
+        use_bias=False, output_activation=None, output_reg=2e-2)
     tanhed = tf.keras.layers.Activation("tanh")(linear_output)
     # clipped = tf.keras.layers.Lambda(lambda t: tf.clip_by_value(
     #     t, -1.0, 1.0))(normed)
@@ -54,7 +55,7 @@ def actor(obs_space, act_space, hidden_sizes):
 def critic(obs_space, act_space, hidden_sizes):
     inputs = tf.keras.Input((obs_space.shape[0]+act_space.shape[0],))/np.array([500.0, 500.0, 500.0, 500.0, 500.0, 500.0, 10.0, 10.0, 10.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0])
     outputs = mlp_functional(inputs, hidden_sizes + (1,), output_activation=None)
-    biased_normed = tf.keras.layers.Activation("sigmoid")(outputs-1.0)
+    biased_normed = tf.keras.layers.Activation("sigmoid")(outputs*0.5 -1.0)
     model =tf.keras.Model(inputs, biased_normed) 
     model.compile()
     return model

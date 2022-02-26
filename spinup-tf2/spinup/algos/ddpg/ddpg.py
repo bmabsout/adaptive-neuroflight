@@ -7,6 +7,31 @@ import time
 from spinup.algos.ddpg import core
 from spinup.utils.logx import EpochLogger
 
+@tf.function
+def geo(l,axis=0):
+    return tf.exp(tf.reduce_mean(tf.math.log(l),axis=axis))
+
+@tf.function
+def p_mean(l, p, slack=0.0, axis=1):
+    slacked = l + slack
+    if(len(slacked.shape) == 1): #enforce having batches
+        slacked = tf.expand_dims(slacked, axis=0)
+    batch_size = slacked.shape[0]
+    zeros = tf.zeros(batch_size, l.dtype)
+    ones = tf.ones(batch_size, l.dtype)
+    handle_zeros = tf.reduce_all(slacked > 1e-20, axis=axis) if p <=1e-20 else tf.fill((batch_size,), True)
+    escape_from_nan = tf.where(tf.expand_dims(handle_zeros, axis=axis), slacked, slacked*0.0 + 1.0)
+    handled = (
+            geo(escape_from_nan, axis=axis)
+        if p == 0 else
+            tf.reduce_mean(escape_from_nan**p, axis=axis)**(1.0/p)
+        ) - slack
+    res = tf.where(handle_zeros, handled, zeros)
+    return res
+
+@tf.function
+def weaken(weaken_me, weaken_by):
+    return (weaken_me + weaken_by)/(1.0 + weaken_by)
 
 class ReplayBuffer:
     """
@@ -53,8 +78,8 @@ class HyperParams:
             start_steps=10000,
             act_noise=0.1,
             max_ep_len=1000,
-            train_every=100,
-            train_steps=100,
+            train_every=50,
+            train_steps=30,
         ):
         self.ac_kwargs = ac_kwargs
         self.seed = seed
@@ -199,30 +224,46 @@ def ddpg(env_fn, hp: HyperParams=HyperParams(),actor_critic=core.mlp_actor_criti
             pi_targ = pi_targ_network(obs2)
             q_pi_targ = tf.squeeze(q_targ_network(tf.concat([obs2, pi_targ], axis=-1)), axis=1)
             backup = tf.stop_gradient(rews/max_q_val + (1 - d)*hp.gamma * q_pi_targ)
-            q_loss = tf.reduce_mean((q-backup)**2) + sum(q_network.losses)*0.1
+            q_loss = tf.reduce_mean((q-backup)**2) #+ sum(q_network.losses)*0.1
         grads = tape.gradient(q_loss, q_network.trainable_variables)
         grads_and_vars = zip(grads, q_network.trainable_variables)
         q_optimizer.apply_gradients(grads_and_vars)
         return q_loss, q
 
     @tf.function
-    def pi_update(obs):
+    def pi_update(obs1, obs2):
         with tf.GradientTape() as tape:
-            pi = pi_network(obs)
-            q_pi = tf.reduce_mean(tf.squeeze(q_network(tf.concat([obs, pi], axis=-1)), axis=-1))
+            pi = pi_network(obs1)
+            pi2 = pi_network(obs2)
+            action_diffs = tf.abs((pi-pi2))/2.0
+            q_pi = tf.reduce_mean(tf.squeeze(q_network(tf.concat([obs1, pi], axis=-1)), axis=-1))
             if safety_q:
-                safe_q_pi = tf.reduce_mean(tf.squeeze(safety_q(tf.concat([obs, pi], axis=-1)), axis=-1))
+                safe_q_pi = tf.reduce_mean(tf.squeeze(safety_q(tf.concat([obs1, pi], axis=-1)), axis=-1))
+                powers = 0.5
+                q_c = p_mean(tf.stack([q_pi, safe_q_pi]), 0.0)
             else:
+                powers = 1.0
                 safe_q_pi = 1.0
-            # tf.print("pi", pi[100])
-            # tf.print("extremes", 1.0 - extremes[100])
-            # extremes = (tf.maximum(tf.abs(pi), 0.9)-0.9)/0.11
+                q_c = q_pi
 
-            avoid_extremes = tf.reduce_min(1.0 - tf.abs(pi)**2.0)
+            avoid_extremes = tf.reduce_mean(1.0 - tf.abs(pi))
             # tf.print("avoid_extremes", avoid_extremes)
             # tf.print("q_pi", q_pi)
-            reg = sum(pi_network.losses)*0.01
-            pi_loss = 1.0 - q_pi*safe_q_pi + reg
+            reg = sum(pi_network.losses)*1e-3
+            # print("q_pi", q_pi)
+            action_c = p_mean(action_diffs, 1.0)
+            center_c = p_mean(tf.abs(pi), 1.0)
+            # tf.print("q_c",q_c)
+            # tf.print("action_c",action_c)
+            # tf.print("center_c", center_c)
+            # reg_c = p_mean(p_mean(tf.stack([action_c, center_c], axis=1), 0.0), 0.5)
+            # with_center_c = p_mean(tf.stack([q_c,weaken(center_c,1.0)],axis=1),-1.0)
+            # combined_c = with_center_c - action_c*1e-5 - reg
+            combined_c = q_c #-reg #- center_c*3e-5 - action_c*1e-7 -reg*0.1
+            # tf.print("w", weaken(reg_c,4.0))
+            # tf.print("c", combined_c)
+            # print("ev", everything_c)
+            pi_loss = 1.0-combined_c
         grads = tape.gradient(pi_loss, pi_network.trainable_variables)
         grads_and_vars = zip(grads, pi_network.trainable_variables)
         pi_optimizer.apply_gradients(grads_and_vars)
@@ -300,7 +341,7 @@ def ddpg(env_fn, hp: HyperParams=HyperParams(),actor_critic=core.mlp_actor_criti
                 logger.store(LossQ=loss_q)
 
                 # Policy update
-                pi_loss, avoid_extremes, qs, safe_qs, reg = pi_update(obs1)
+                pi_loss, avoid_extremes, qs, safe_qs, reg = pi_update(obs1, obs2)
                 logger.store(
                     LossPi=pi_loss.numpy(),
                     NormQ=qs,

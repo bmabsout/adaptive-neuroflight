@@ -65,6 +65,15 @@ def save_flight(env, seed, actor, save_location, num_episodes=3):
         flight_log.save(episode_index, ob.shape[0])
     return rewards_sum/num_total_steps
     
+def existing_actor_critic(*args, **kwargs):
+    actor = tf.keras.models.load_model(
+        "/data/neuroflight/CODE/gymfc-nf1/training_data/results/tf2_ddpg_c9188dd6_s83352_t220224-143501/checkpoints/ckpt_7/actor"
+    )
+    critic = tf.keras.models.load_model(
+        "/data/neuroflight/CODE/gymfc-nf1/training_data/results/tf2_ddpg_c9188dd6_s83352_t220224-143501/checkpoints/ckpt_7/critic"
+    )
+    return actor, critic 
+
 def train_nf1(hypers):
     signal(SIGINT, training_utils.handler)
 
@@ -95,6 +104,7 @@ def train_nf1(hypers):
     spinup.ddpg(
         lambda : env,
         on_save=on_save,
+        # actor_critic=existing_actor_critic,
         hp=hypers
     )
     return avg_reward
@@ -106,14 +116,14 @@ if __name__ == '__main__':
     #     circular_buffer_size=-1)
     hypers = HyperParams(
         steps_per_epoch=10000,
-        start_steps=1000,
+        start_steps=10000,
         replay_size=1000000,
         gamma=0.9,
         polyak=0.995,
         pi_lr=0.001, #tf.optimizers.schedules.PolynomialDecay(3e-4, 1e6, end_learning_rate=0),
         q_lr=0.001, #tf.optimizers.schedules.PolynomialDecay(3e-4, 1e6, end_learning_rate=0),
         batch_size=200,
-        act_noise=0.05,
+        act_noise=0.01,
         max_ep_len=10000,
         epochs=100
     )
