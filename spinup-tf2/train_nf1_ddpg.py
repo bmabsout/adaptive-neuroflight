@@ -34,10 +34,10 @@ import neuroflight_trainer.gyms
 import neuroflight_trainer.variables as variables
 from neuroflight_trainer.rl_algs import training_utils
 from neuroflight_trainer.validation.fc_logging_utils import FlightLog
-
+from multiprocessing import Process, Queue
 import tensorflow as tf
 
-def save_flight(env, seed, actor, save_location, num_episodes=3):
+def save_flight(env, seed, actor, save_location, num_episodes=2):
     print("saving to:", save_location)
     actor.save(save_location + "/actor")
     flight_log = FlightLog(save_location)
@@ -67,12 +67,22 @@ def save_flight(env, seed, actor, save_location, num_episodes=3):
     
 def existing_actor_critic(*args, **kwargs):
     actor = tf.keras.models.load_model(
-        "/data/neuroflight/CODE/gymfc-nf1/training_data/results/tf2_ddpg_c9188dd6_s83352_t220224-143501/checkpoints/ckpt_7/actor"
+        "/data/neuroflight/CODE/gymfc-nf1/training_data/results/tf2_ddpg_c952db05_s623253_t220226-155006/checkpoints/ckpt_33/actor"
     )
     critic = tf.keras.models.load_model(
-        "/data/neuroflight/CODE/gymfc-nf1/training_data/results/tf2_ddpg_c9188dd6_s83352_t220224-143501/checkpoints/ckpt_7/critic"
+        "/data/neuroflight/CODE/gymfc-nf1/training_data/results/tf2_ddpg_c952db05_s623253_t220226-155006/checkpoints/ckpt_33/critic"
     )
     return actor, critic 
+
+def save_process(env_id, save_queue, ckpt_dir, hypers):
+    test_env = gym.make(env_id)
+    test_env.noise_sigma = 1
+    while True:
+        (actor, critic, ckpt_id) = save_queue.get()
+        save_path = os.path.join(ckpt_dir, f"ckpt_{ckpt_id}")
+        critic.save(os.path.join(save_path, "critic"))
+        save_flight(test_env, hypers.seed, actor, save_path)
+
 
 def train_nf1(hypers):
     signal(SIGINT, training_utils.handler)
@@ -92,14 +102,13 @@ def train_nf1(hypers):
 
 
     env.noise_sigma = 1
+    save_queue = Queue()
 
-    test_env = gym.make(env_id)
-    test_env.noise_sigma = 1
-    avg_reward = 0
+    Process(target=save_process, args=(env_id, save_queue, ckpt_dir, hypers)).start()
+    # avg_reward = 0
     def on_save(actor, critic, ckpt_id):
-        save_path = os.path.join(ckpt_dir, f"ckpt_{ckpt_id}")
-        critic.save(os.path.join(save_path, "critic"))
-        avg_reward = save_flight(test_env, hypers.seed, actor, save_path)
+        save_queue.put((actor, critic, ckpt_id))
+        
 
     spinup.ddpg(
         lambda : env,
@@ -107,7 +116,7 @@ def train_nf1(hypers):
         # actor_critic=existing_actor_critic,
         hp=hypers
     )
-    return avg_reward
+    # return avg_reward
 
 if __name__ == '__main__':
     # tf.debugging.experimental.enable_dump_debug_info(
@@ -117,15 +126,15 @@ if __name__ == '__main__':
     hypers = HyperParams(
         steps_per_epoch=10000,
         start_steps=10000,
-        replay_size=1000000,
+        replay_size=500000,
         gamma=0.9,
         polyak=0.995,
-        pi_lr=0.001, #tf.optimizers.schedules.PolynomialDecay(3e-4, 1e6, end_learning_rate=0),
-        q_lr=0.001, #tf.optimizers.schedules.PolynomialDecay(3e-4, 1e6, end_learning_rate=0),
-        batch_size=200,
+        pi_lr=tf.optimizers.schedules.PolynomialDecay(1e-3, 1e6, end_learning_rate=0),
+        q_lr=tf.optimizers.schedules.PolynomialDecay(1e-3, 1e6, end_learning_rate=0),
+        batch_size=100,
         act_noise=0.1,
         max_ep_len=10000,
-        epochs=100
+        epochs=30
     )
     
     train_nf1(hypers)

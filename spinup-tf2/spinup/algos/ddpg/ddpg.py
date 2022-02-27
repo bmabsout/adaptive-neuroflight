@@ -247,7 +247,6 @@ def ddpg(env_fn, hp: HyperParams=HyperParams(),actor_critic=core.mlp_actor_criti
         with tf.GradientTape() as tape:
             pi = pi_network(obs1)
             pi2 = pi_network(obs2)
-            action_diffs = tf.abs((pi-pi2))/2.0
             q_pi = tf.reduce_mean(tf.squeeze(q_network(tf.concat([obs1, pi], axis=-1)), axis=-1))
             if safety_q:
                 safe_q_pi = tf.reduce_mean(tf.squeeze(safety_q(tf.concat([obs1, pi], axis=-1)), axis=-1))
@@ -261,26 +260,27 @@ def ddpg(env_fn, hp: HyperParams=HyperParams(),actor_critic=core.mlp_actor_criti
             # tf.print("q_pi", q_pi)
             reg = sum(pi_network.losses)*1e-3
             # print("q_pi", q_pi)
-            action_c = p_to_min(p_mean(1.0-action_diffs, 0.1))
-            center_c = p_to_min(p_mean(1.0-tf.abs(pi), 0.1))
+            action_diffs = tf.abs((pi-pi2))/2.0
+            action_c = p_mean(p_mean(action_diffs, 1.0), 1.0)
+            center_c = tf.reduce_mean((tf.abs(pi+0.4)/1.4)**2.0)
             # tf.print("q_c",q_c)
             # tf.print("action_c",action_c)
             # tf.print("center_c", center_c)
-            reg_c = tf.squeeze(p_mean(tf.stack([action_c, center_c], axis=1), 0.0))
-            # tf.print("r",reg_c)
-            # tf.print("q",q_c)
-            # tf.print("")
-            with_center_c = p_to_min(tf.stack([q_c,weaken(reg_c,1.0)]))
+            # reg_c = tf.squeeze(p_mean(tf.stack([action_c, center_c], axis=1), 0.0))
+            # # tf.print("r",reg_c)
+            # # tf.print("q",q_c)
+            # # tf.print("")
+            # with_center_c = p_to_min(tf.stack([q_c,weaken(reg_c,1.0)]))
             # combined_c = q_c - reg - reg_c*1e-3
             # combined_c = q_c - center_c*3e-5 - action_c*1e-7 -reg*0.1
             # tf.print("w", weaken(reg_c,4.0))
             # tf.print("c", combined_c)
             # print("ev", everything_c)
-            pi_loss = 1.0-with_center_c
+            pi_loss = 1.0-q_c+center_c*1e-2+action_c*1e-4 + reg
         grads = tape.gradient(pi_loss, pi_network.trainable_variables)
         grads_and_vars = zip(grads, pi_network.trainable_variables)
         pi_optimizer.apply_gradients(grads_and_vars)
-        return pi_loss, avoid_extremes, q_pi, safe_q_pi, reg_c
+        return pi_loss, avoid_extremes, q_pi, safe_q_pi, 0
 
     def get_action(o, noise_scale):
         a = pi_network(tf.constant(o.reshape(1,-1))).numpy()[0]
@@ -315,7 +315,7 @@ def ddpg(env_fn, hp: HyperParams=HyperParams(),actor_critic=core.mlp_actor_criti
         use the learned policy (with some noise, via act_noise). 
         """
         if t > hp.start_steps:
-            a = get_action(o, hp.act_noise*t/hp.total_steps)
+            a = get_action(o, hp.act_noise*t/total_steps)
         else:
             a = env.action_space.sample()
 

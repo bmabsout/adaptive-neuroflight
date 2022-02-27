@@ -7,22 +7,44 @@ import time
 from spinup.algos.ddpg import core
 from spinup.utils.logx import EpochLogger
 
-def with_importance(x, importance):
-    return (x-importance)/(1.0-importance)
 
-def geo(l, axis):
-    return np.exp(np.mean(np.log(l), axis=axis))
+@tf.function
+def geo(l,axis=0):
+    return tf.exp(tf.reduce_mean(tf.math.log(l),axis=axis))
 
-def p_mean(l, p, slack=0.0):
-    slacked = np.array(l) + slack
+@tf.function
+def p_mean(l, p, slack=0.0, axis=1):
+    slacked = l + slack
     if(len(slacked.shape) == 1): #enforce having batches
-        slacked = np.array([slacked])
+        slacked = tf.expand_dims(slacked, axis=0)
     batch_size = slacked.shape[0]
-    res = np.zeros(batch_size)
-    handle_zeros = (slacked > 1e-20).all(axis=1) if p <=1e-20 else np.full(batch_size, True)
+    zeros = tf.zeros(batch_size, l.dtype)
+    ones = tf.ones(batch_size, l.dtype)
+    handle_zeros = tf.reduce_all(slacked > 1e-20, axis=axis) if p <=1e-20 else tf.fill((batch_size,), True)
+    escape_from_nan = tf.where(tf.expand_dims(handle_zeros, axis=axis), slacked, slacked*0.0 + 1.0)
+    handled = (
+            geo(escape_from_nan, axis=axis)
+        if p == 0 else
+            tf.reduce_mean(escape_from_nan**p, axis=axis)**(1.0/p)
+        ) - slack
+    res = tf.where(handle_zeros, handled, zeros)
+    return res
 
-    res[handle_zeros] = (geo(slacked[handle_zeros], axis=1) if p == 0 else np.mean(slacked[handle_zeros]**p, axis=1)**(1.0/p)) - slack
-    return res.squeeze()
+@tf.function
+def p_to_min(l, p=0, q=0.0):
+    deformator = p_mean(1.0-l, q)
+    return p_mean(l, p)*deformator + (1.0-deformator)*tf.reduce_min(l)
+
+# @tf.function
+# def with_mixer(actions): #batch dimension is 0
+#     return actions-tf.reduce_min(actions,axis=1)
+
+# def mixer_diff_dfl(a1,a2):
+#     return tf.abs(with_mixer(a1)-with_mixer(a2))/2.0
+
+@tf.function
+def weaken(weaken_me, weaken_by):
+    return (weaken_me + weaken_by)/(1.0 + weaken_by)
 
 def to_positive(r):
     return np.clip(1-r,0,1)
@@ -30,12 +52,12 @@ def to_positive(r):
 def closeness_rw(true_error):
     return p_mean(to_positive(np.tanh(np.abs(true_error)/100)),0)
 
-def acc_rw(motor_acc):
-    return with_importance(p_mean(to_positive(np.abs(motor_acc)),0),-0.7)
+# def acc_rw(motor_acc):
+#     return with_importance(p_mean(to_positive(np.abs(motor_acc)),0),-0.7)
 
-def rewards_scalar(rewards_list):
-    closeness, keep_middle, acc = rewards_list
-    return p_mean([closeness,acc], 0)
+# def rewards_scalar(rewards_list):
+#     closeness, keep_middle, acc = rewards_list
+#     return p_mean([closeness,acc], 0)
 
 def unroll_rpy(rpy):
     return np.array([rpy.roll, rpy.pitch, rpy.yaw])
@@ -58,10 +80,9 @@ def unroll_obs(obs):
 
 
 def rewards_fn(obs, act):
-    motor_acc = unroll_act(obs.prev_action) - unroll_act(act)
-    acc = acc_rw(motor_acc)
+    # motor_acc = unroll_act(obs.prev_action) - unroll_act(act)
     closeness = closeness_rw(unroll_rpy(obs.error))
-    return p_mean([closeness, acc], 0)
+    return closeness
 
 
 class ReplayBuffer:
@@ -104,7 +125,7 @@ class HyperParams:
             polyak=0.995,
             pi_lr=1e-4,
             q_lr=1e-4,
-            batch_size=200,
+            batch_size=300,
             train_every=50,
             train_steps=30,
         ):
@@ -239,37 +260,52 @@ def live_ddpg(obs_queue, obs_space, act_space, hp: HyperParams=HyperParams(),act
             q = tf.squeeze(q_network(tf.concat([obs1, acts], axis=-1)), axis=1)
             pi_targ = pi_targ_network(obs2)
             q_pi_targ = tf.squeeze(q_targ_network(tf.concat([obs2, pi_targ], axis=-1)), axis=1)
-            backup = tf.stop_gradient(rews/max_q_val + hp.gamma * q_pi_targ)
-            q_loss = tf.reduce_mean((q-backup)**2) + sum(q_network.losses)*0.1
+            backup = tf.stop_gradient(rews/max_q_val + (1 - d)*hp.gamma * q_pi_targ)
+            q_loss = tf.reduce_mean((q-backup)**2) #+ sum(q_network.losses)*0.1
         grads = tape.gradient(q_loss, q_network.trainable_variables)
         grads_and_vars = zip(grads, q_network.trainable_variables)
         q_optimizer.apply_gradients(grads_and_vars)
         return q_loss, q
 
     @tf.function
-    def pi_update(obs):
+    def pi_update(obs1, obs2):
         with tf.GradientTape() as tape:
-            pi = pi_network(obs)
-            q_pi = tf.reduce_mean(tf.squeeze(q_network(tf.concat([obs, pi], axis=-1)), axis=-1))
+            pi = pi_network(obs1)
+            pi2 = pi_network(obs2)
+            q_pi = tf.reduce_mean(tf.squeeze(q_network(tf.concat([obs1, pi], axis=-1)), axis=-1))
             if safety_q:
-                safe_q_pi = tf.reduce_mean(tf.squeeze(safety_q(tf.concat([obs, pi], axis=-1)), axis=-1))
-                powers = 0.5
+                safe_q_pi = tf.reduce_mean(tf.squeeze(safety_q(tf.concat([obs1, pi], axis=-1)), axis=-1))
+                q_c = p_mean(tf.stack([q_pi, safe_q_pi]), 0.0)
             else:
-                powers = 1.0
                 safe_q_pi = 1.0
-            # tf.print("pi", pi[100])
-            # tf.print("extremes", 1.0 - extremes[100])
-            # extremes = (tf.maximum(tf.abs(pi), 0.9)-0.9)/0.11
+                q_c = q_pi
 
-            avoid_extremes = tf.reduce_min(1.0 - tf.abs(pi)**2.0)
+            avoid_extremes = tf.reduce_mean(1.0 - tf.abs(pi))
             # tf.print("avoid_extremes", avoid_extremes)
             # tf.print("q_pi", q_pi)
-            reg = sum(pi_network.losses)*0.015
-            pi_loss = 1.0 - (q_pi*safe_q_pi)**powers + reg
+            reg = sum(pi_network.losses)*1e-3
+            # print("q_pi", q_pi)
+            action_diffs = tf.abs((pi-pi2))/2.0
+            action_c = p_mean(p_mean(action_diffs, 1.0), 1.0)
+            center_c = tf.reduce_mean((tf.abs(pi+0.4)/1.4)**2.0)
+            # tf.print("q_c",q_c)
+            # tf.print("action_c",action_c)
+            # tf.print("center_c", center_c)
+            # reg_c = tf.squeeze(p_mean(tf.stack([action_c, center_c], axis=1), 0.0))
+            # # tf.print("r",reg_c)
+            # # tf.print("q",q_c)
+            # # tf.print("")
+            # with_center_c = p_to_min(tf.stack([q_c,weaken(reg_c,1.0)]))
+            # combined_c = q_c - reg - reg_c*1e-3
+            # combined_c = q_c - center_c*3e-5 - action_c*1e-7 -reg*0.1
+            # tf.print("w", weaken(reg_c,4.0))
+            # tf.print("c", combined_c)
+            # print("ev", everything_c)
+            pi_loss = 1.0-q_c+center_c*1e-2+action_c*1e-4 + reg
         grads = tape.gradient(pi_loss, pi_network.trainable_variables)
         grads_and_vars = zip(grads, pi_network.trainable_variables)
         pi_optimizer.apply_gradients(grads_and_vars)
-        return pi_loss, avoid_extremes, q_pi, safe_q_pi, reg
+        return pi_loss, avoid_extremes, q_pi, safe_q_pi, 0
 
     start_time = time.time()
     t = 0
@@ -301,7 +337,7 @@ def live_ddpg(obs_queue, obs_space, act_space, hp: HyperParams=HyperParams(),act
                 logger.store(LossQ=loss_q)
 
                 # Policy update
-                pi_loss, avoid_extremes, qs, safe_qs, reg = pi_update(obs1)
+                pi_loss, avoid_extremes, qs, safe_qs, reg = pi_update(obs1, obs2)
                 logger.store(
                     LossPi=pi_loss.numpy(),
                     NormQ=qs,
@@ -318,7 +354,7 @@ def live_ddpg(obs_queue, obs_space, act_space, hp: HyperParams=HyperParams(),act
 
             # Save model
             if (epoch % save_freq == 0):
-                on_save(pi_targ_network, q_network, epoch//save_freq)
+                on_save(pi_network, q_network, epoch//save_freq)
 
             # Log info about epoch
             logger.log_tabular('Epoch', epoch)
