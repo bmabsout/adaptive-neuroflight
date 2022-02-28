@@ -2,6 +2,7 @@ from dataclasses import asdict, dataclass
 from typing import NamedTuple
 import numpy as np
 import tensorflow as tf
+import pickle
 import gym
 import time
 from spinup.algos.ddpg import core
@@ -30,7 +31,7 @@ def p_mean(l, p, slack=0.0, axis=1):
     return res
 
 @tf.function
-def p_to_min(l, p=0, q=0.0):
+def p_to_min(l, p=0, q=0.2):
     deformator = p_mean(1.0-l, q)
     return p_mean(l, p)*deformator + (1.0-deformator)*tf.reduce_min(l)
 
@@ -77,7 +78,7 @@ class ReplayBuffer:
 
 class HyperParams:
     def __init__( self,
-            ac_kwargs={"actor_hidden_sizes":(32,32), "critic_hidden_sizes":(400,300)},
+            ac_kwargs={"actor_hidden_sizes":(32,32), "critic_hidden_sizes":(512,512)},
             seed=int(time.time()* 1e5) % int(1e6),
             steps_per_epoch=5000,
             epochs=100,
@@ -119,7 +120,7 @@ def with_importance(x, importance):
 Deep Deterministic Policy Gradient (DDPG)
 
 """
-def ddpg(env_fn, hp: HyperParams=HyperParams(),actor_critic=core.mlp_actor_critic, logger_kwargs=dict(), save_freq=1, on_save=lambda *_:(), safety_q=None):
+def ddpg(env_fn, hp: HyperParams=HyperParams(),actor_critic=core.mlp_actor_critic, logger_kwargs=dict(), save_freq=1, on_save=lambda *_:(), anchor_q=None):
     """
 
     Args:
@@ -248,8 +249,8 @@ def ddpg(env_fn, hp: HyperParams=HyperParams(),actor_critic=core.mlp_actor_criti
             pi = pi_network(obs1)
             pi2 = pi_network(obs2)
             q_pi = tf.reduce_mean(tf.squeeze(q_network(tf.concat([obs1, pi], axis=-1)), axis=-1))
-            if safety_q:
-                safe_q_pi = tf.reduce_mean(tf.squeeze(safety_q(tf.concat([obs1, pi], axis=-1)), axis=-1))
+            if anchor_q:
+                safe_q_pi = tf.reduce_mean(tf.squeeze(anchor_q(tf.concat([obs1, pi], axis=-1)), axis=-1))
                 q_c = p_mean(tf.stack([q_pi, safe_q_pi]), 0.0)
             else:
                 safe_q_pi = 1.0
@@ -261,26 +262,28 @@ def ddpg(env_fn, hp: HyperParams=HyperParams(),actor_critic=core.mlp_actor_criti
             reg = sum(pi_network.losses)*1e-3
             # print("q_pi", q_pi)
             action_diffs = tf.abs((pi-pi2))/2.0
-            action_c = p_mean(p_mean(action_diffs, 1.0), 1.0)
-            center_c = tf.reduce_mean((tf.abs(pi+0.4)/1.4)**2.0)
+            action_c = tf.squeeze(p_mean(p_mean(1.0 - action_diffs, 1.0), 1.0))
+            center_c = tf.squeeze(p_mean(p_mean(1.0 - tf.abs(pi+0.4)/1.5,1.0),1.0))
             # tf.print("q_c",q_c)
-            # tf.print("action_c",action_c)
+            reg_c = p_mean(tf.stack([action_c**1.5, center_c]), 0.0)
+            # tf.print("action_c", action_c)
             # tf.print("center_c", center_c)
-            # reg_c = tf.squeeze(p_mean(tf.stack([action_c, center_c], axis=1), 0.0))
-            # # tf.print("r",reg_c)
-            # # tf.print("q",q_c)
+            # # # # tf.print("r",reg_c)
+            # tf.print("q",q_c)
             # # tf.print("")
-            # with_center_c = p_to_min(tf.stack([q_c,weaken(reg_c,1.0)]))
+            with_center_c = p_to_min(tf.stack([q_c,tf.squeeze(reg_c)**2.0]),0.0)
+            # with_center_c = p_mean(tf.stack([q_c,action_c, center_c]),-5.0)
+            # tf.print(with_center_c)
             # combined_c = q_c - reg - reg_c*1e-3
             # combined_c = q_c - center_c*3e-5 - action_c*1e-7 -reg*0.1
             # tf.print("w", weaken(reg_c,4.0))
             # tf.print("c", combined_c)
             # print("ev", everything_c)
-            pi_loss = 1.0-q_c+center_c*1e-2+action_c*1e-4 + reg
+            pi_loss = 1.0-with_center_c
         grads = tape.gradient(pi_loss, pi_network.trainable_variables)
         grads_and_vars = zip(grads, pi_network.trainable_variables)
         pi_optimizer.apply_gradients(grads_and_vars)
-        return pi_loss, avoid_extremes, q_pi, safe_q_pi, 0
+        return pi_loss, avoid_extremes, q_pi, safe_q_pi, reg_c
 
     def get_action(o, noise_scale):
         a = pi_network(tf.constant(o.reshape(1,-1))).numpy()[0]
@@ -336,7 +339,7 @@ def ddpg(env_fn, hp: HyperParams=HyperParams(),actor_critic=core.mlp_actor_criti
         # most recent observation!
         o = o2
 
-        if t > 0 and t % hp.train_every == 0:
+        if t > hp.start_steps and t % hp.train_every == 0:
             """
             Perform all DDPG updates at the end of the trajectory,
             in accordance with tuning done by TD3 paper authors.
@@ -371,12 +374,13 @@ def ddpg(env_fn, hp: HyperParams=HyperParams(),actor_critic=core.mlp_actor_criti
             o, r, d, ep_ret, ep_len = env.reset(), 0, False, 0, 0
 
         # End of epoch wrap-up
-        if t > 0 and t % hp.steps_per_epoch == 0:
+        if t > hp.start_steps and t % hp.steps_per_epoch == 0:
             print(hp.steps_per_epoch)
             epoch = t // hp.steps_per_epoch
 
             # Save model
             if (epoch % save_freq == 0) or (epoch == hp.epochs-1):
+                pickle.dump( replay_buffer, open( "replay.p", "wb" ) )
                 on_save(pi_network, q_network, epoch//save_freq)
             #     logger.save_state({'env': env}, None)
 

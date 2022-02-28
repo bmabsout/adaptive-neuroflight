@@ -1,26 +1,3 @@
-# import spinup
-# import numpy as np
-# import tensorflow as tf
-# import gym
-# import time
-# import neuroflight_trainer.gyms
-# import os
-
-# # from spinup.utils.run_utils import setup_logger_kwargs
-# seed = 1234
-
-# spinup.ddpg(
-#     lambda : gym.make("gymfc_perlin_discontinuous-v3"),
-#     actor_critic=spinup.algos.ddpg.core.mlp_actor_critic,
-#     gamma=0.9,
-#     pi_lr=5e-4,#tf.optimizers.schedules.PolynomialDecay(3e-4, 1e6, end_learning_rate=0),
-#     q_lr=1e-3,#tf.optimizers.schedules.PolynomialDecay(3e-4, 1e6, end_learning_rate=0),
-#     seed=seed,
-#     steps_per_epoch=10000,
-#     epochs=100,
-#     max_ep_len=10000
-# )
-
 import numpy as np
 import gym
 import shutil
@@ -131,10 +108,16 @@ if __name__ == '__main__':
         polyak=0.995,
         pi_lr=tf.optimizers.schedules.PolynomialDecay(1e-3, 1e6, end_learning_rate=0),
         q_lr=tf.optimizers.schedules.PolynomialDecay(1e-3, 1e6, end_learning_rate=0),
-        batch_size=100,
+        batch_size=200,
         act_noise=0.1,
         max_ep_len=10000,
-        epochs=30
+        epochs=100
     )
     
     train_nf1(hypers)
+    # actor = tf.keras.models.load_model(
+    #     "/data/neuroflight/CODE/adaptive-neuroflight/neuroflight/XBee/transmission/ckpt_3/actor"
+    # )
+    # test_env = gym.make("gymfc_perlin_discontinuous-v3")
+    # test_env.noise_sigma = 1
+    # save_flight(test_env, 0, actor, "test_crazy")
