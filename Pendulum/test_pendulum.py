@@ -6,7 +6,9 @@ saved = tf.saved_model.load("mid_leaning_actor")
 actor = lambda x: saved(np.array([x]))[0]
 env = Pendulum.PendulumEnv(g=10., color=(0.0, 0.8,0.2))
 o = env.reset()
+high = env.action_space.high
+low = env.action_space.low
 for _ in range(200):
-    o, r, d, i, = env.step(actor(o))
+    o, r, d, i, = env.step(actor(o)*(high - low)/2.0 + (high + low)/2.0)
     env.render()
 

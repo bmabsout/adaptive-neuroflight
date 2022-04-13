@@ -41,7 +41,7 @@ def save_flight(env, seed, actor, save_location, num_episodes=2):
                            dbg=env.dbg)
         flight_log.save(episode_index, ob.shape[0])
     return rewards_sum/num_total_steps
-    
+
 def existing_actor_critic(*args, **kwargs):
     actor = tf.keras.models.load_model(
         "/data/neuroflight/CODE/gymfc-nf1/training_data/results/tf2_ddpg_c952db05_s623253_t220226-155006/checkpoints/ckpt_33/actor"
@@ -64,19 +64,15 @@ def save_process(env_id, save_queue, ckpt_dir, hypers):
 def train_nf1(hypers):
     signal(SIGINT, training_utils.handler)
 
-    
     training_dir = training_utils.get_training_dir('tf2_ddpg', hypers.seed)
     print ("Storing results to ", training_dir)
-
 
     ckpt_dir = os.path.join(training_dir, "checkpoints")
     os.makedirs(training_dir)
 
-
     env_id = "gymfc_perlin_discontinuous-v3"
     env = gym.make(env_id)
     env.seed(hypers.seed)
-
 
     env.noise_sigma = 1
     save_queue = Queue()
@@ -85,7 +81,7 @@ def train_nf1(hypers):
     # avg_reward = 0
     def on_save(actor, critic, ckpt_id):
         save_queue.put((actor, critic, ckpt_id))
-        
+
 
     spinup.ddpg(
         lambda : env,
@@ -102,6 +98,11 @@ if __name__ == '__main__':
     #     circular_buffer_size=-1)
     hypers = HyperParams(
         steps_per_epoch=10000,
+        ac_kwargs={
+            "actor_hidden_sizes":(32,32),
+            "critic_hidden_sizes":(512,512),
+            "obs_normalizer": np.array([500.0, 500.0, 500.0, 500.0, 500.0, 500.0, 10.0, 10.0, 10.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0])
+        },
         start_steps=10000,
         replay_size=500000,
         gamma=0.9,
@@ -113,7 +114,7 @@ if __name__ == '__main__':
         max_ep_len=10000,
         epochs=100
     )
-    
+
     train_nf1(hypers)
     # actor = tf.keras.models.load_model(
     #     "/data/neuroflight/CODE/adaptive-neuroflight/neuroflight/XBee/transmission/ckpt_3/actor"

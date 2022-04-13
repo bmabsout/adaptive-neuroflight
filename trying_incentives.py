@@ -13,7 +13,6 @@ def p_mean(l, p, slack=0.0, axis=1):
         slacked = tf.expand_dims(slacked, axis=0)
     batch_size = slacked.shape[0]
     zeros = tf.zeros(batch_size, l.dtype)
-    ones = tf.ones(batch_size, l.dtype)
     handle_zeros = tf.reduce_all(slacked > 1e-20, axis=axis) if p <=1e-20 else tf.fill((batch_size,), True)
     escape_from_nan = tf.where(tf.expand_dims(handle_zeros, axis=axis), slacked, slacked*0.0 + 1.0)
     handled = (
@@ -33,19 +32,26 @@ def p_to_min(l, p=0, q=0.2):
 def weaken(weaken_me, weaken_by):
     return (weaken_me + weaken_by)/(1.0 + weaken_by)
 
-init_x = tf.Variable(0.0)
+@tf.custom_gradient
+def to_constraint(x):
+  def grad(dy):
+    return dy
+  return tf.math.sigmoid(x), grad
+
+init_x = tf.Variable(0.001)
 init_y = tf.Variable(-10.0)
 optimizer = tf.keras.optimizers.SGD(learning_rate=0.1)
 
 for i in range(15):
 	with tf.GradientTape() as tape:
-		x = tf.math.sigmoid(init_x)
-		y = tf.math.sigmoid(init_y)
+		x = tf.math.tanh(init_x)
+		y = tf.grad_pass_through(tf.math.sigmoid)(init_y)#to_constraint(init_y)
 		gain = p_mean(tf.stack([x,y]), 0.0)
-		loss = 1.0 - gain
-	# gradients = list(map(lambda g: tf.math.tanh(g),tape.gradient(loss, [init_x, init_y])))
-	gradients = tape.gradient(loss, [init_x, init_y])
-	optimizer.apply_gradients(zip(gradients, [init_x,init_y]))
+
+	vars = [init_x, init_y]
+	# gradients = list(map(tf.math.tanh, tape.gradient(gain, vars)))
+	gradients = tape.gradient(gain, vars)
+	optimizer.apply_gradients(zip(map(lambda g: -g, gradients), vars), vars)
 
 	print(list(map(lambda g: g.numpy(), gradients)))
 	print("x", x.numpy())

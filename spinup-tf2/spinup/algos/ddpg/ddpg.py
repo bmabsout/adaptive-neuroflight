@@ -111,10 +111,6 @@ class HyperParams:
         self.train_steps = train_steps
 
 
-@tf.function
-def with_importance(x, importance):
-    return (x-importance)/(1.0-importance)
-    
 """
 
 Deep Deterministic Policy Gradient (DDPG)
@@ -248,46 +244,48 @@ def ddpg(env_fn, hp: HyperParams=HyperParams(),actor_critic=core.mlp_actor_criti
         with tf.GradientTape() as tape:
             pi = pi_network(obs1)
             pi2 = pi_network(obs2)
-            q_pi = tf.reduce_mean(tf.squeeze(q_network(tf.concat([obs1, pi], axis=-1)), axis=-1))
+            q_pi = tf.math.sqrt(tf.reduce_mean(tf.squeeze(q_network(tf.concat([obs1, pi], axis=-1)), axis=-1)**2.0))
             if anchor_q:
-                safe_q_pi = tf.reduce_mean(tf.squeeze(anchor_q(tf.concat([obs1, pi], axis=-1)), axis=-1))
+                safe_q_pi = tf.math.sqrt(tf.reduce_mean(tf.squeeze(anchor_q(tf.concat([obs1, pi], axis=-1)), axis=-1)**2.0))
                 q_c = p_mean(tf.stack([q_pi, safe_q_pi]), 0.0)
             else:
                 safe_q_pi = 1.0
                 q_c = q_pi
 
-            avoid_extremes = tf.reduce_mean(1.0 - tf.abs(pi))
-            # tf.print("avoid_extremes", avoid_extremes)
-            # tf.print("q_pi", q_pi)
-            reg = sum(pi_network.losses)*1e-3
-            # print("q_pi", q_pi)
-            action_diffs = tf.abs((pi-pi2))/2.0
-            action_c = tf.squeeze(p_mean(p_mean(1.0 - action_diffs, 1.0), 1.0))
-            center_c = tf.squeeze(p_mean(p_mean(1.0 - tf.abs(pi+0.4)/1.5,1.0),1.0))
-            # tf.print("q_c",q_c)
-            reg_c = p_mean(tf.stack([action_c**1.5, center_c]), 0.0)
-            # tf.print("action_c", action_c)
+            # noise = tf.random.normal(
+            #     obs1.shape, mean=0.0, stddev=np.array([
+            #         0.01,0.01,0.01,
+            #         0.01,0.01,0.01,
+            #         0.01,0.01,0.01,
+            #         0.0,0.0,0.0,0.0]),
+            # )
+            # pi_bar = pi_network(obs1+noise)
+
+            pi_diffs = tf.abs((pi-pi2))/2.0
+            # pi_bar_diffs = (tf.abs((pi-pi_bar))/2.0 + 1e-5)/(1.0+1e-5)
+            pi_diffs_c = p_mean(p_mean(1.0 - pi_diffs, 1.0), 1.0)
+            # pi_bar_c = p_mean(p_mean(1.0 - pi_bar_diffs, 1.0), 1.0)
+            center_c = p_mean(p_mean(1.0 - tf.abs(pi+0.4)/1.5,1.0),1.0)
+            reg_c = tf.squeeze(p_mean(tf.stack([pi_diffs_c**1.5, weaken(center_c,0.5)],axis=1), 0.0))
+
+            # tf.print("pi_bar_c", pi_bar_c)
+            # tf.print("pi_diffs_c", pi_diffs_c)
             # tf.print("center_c", center_c)
-            # # # # tf.print("r",reg_c)
+            # tf.print("r",reg_c)
             # tf.print("q",q_c)
             # # tf.print("")
-            with_center_c = p_to_min(tf.stack([q_c,tf.squeeze(reg_c)**2.0]),0.0)
-            # with_center_c = p_mean(tf.stack([q_c,action_c, center_c]),-5.0)
-            # tf.print(with_center_c)
-            # combined_c = q_c - reg - reg_c*1e-3
-            # combined_c = q_c - center_c*3e-5 - action_c*1e-7 -reg*0.1
-            # tf.print("w", weaken(reg_c,4.0))
-            # tf.print("c", combined_c)
-            # print("ev", everything_c)
-            pi_loss = 1.0-with_center_c
+            # reg = sum(pi_network.losses)*1e-3
+            all_c = p_to_min(tf.stack([q_c,reg_c]))
+            pi_loss = 1.0-all_c
         grads = tape.gradient(pi_loss, pi_network.trainable_variables)
         grads_and_vars = zip(grads, pi_network.trainable_variables)
         pi_optimizer.apply_gradients(grads_and_vars)
-        return pi_loss, avoid_extremes, q_pi, safe_q_pi, reg_c
+        return pi_loss, center_c, q_c, 0, reg_c
 
     def get_action(o, noise_scale):
-        a = pi_network(tf.constant(o.reshape(1,-1))).numpy()[0]
-        a += noise_scale * np.random.randn(act_dim, ) * (env.action_space.high - env.action_space.low)/2.0 + (env.action_space.high + env.action_space.low)/2.0
+        minus_1_to_1 = pi_network(tf.constant(o.reshape(1,-1))).numpy()[0]
+        noise = noise_scale * np.random.randn(act_dim)
+        a = (minus_1_to_1 + noise) * (env.action_space.high - env.action_space.low)/2.0 + (env.action_space.high + env.action_space.low)/2.0
         return np.clip(a, env.action_space.low, env.action_space.high)
 
     def test_agent(n=1):

@@ -44,8 +44,8 @@ class PendulumEnv(gym.Env):
         u = np.clip(u, -self.max_torque, self.max_torque)[0]
         self.last_u = u  # for rendering
         angle_rw = 1.0 - normed_angular_distance(th, self.setpoint)
-        thdot_rw = 1.0 - np.abs(thdot/self.max_speed)
-        rw = (angle_rw*thdot_rw)**0.5
+        # thdot_rw = 1.0 - np.abs(thdot/self.max_speed)
+        # rw = (angle_rw*thdot_rw)**0.5
 
         newthdot = thdot + (3 * g / (2 * l) * np.sin(th) +
                             3.0 / (m * l ** 2) * u) * dt
@@ -53,7 +53,7 @@ class PendulumEnv(gym.Env):
         newth = th + newthdot * dt
 
         self.state = np.array([newth, newthdot])
-        return self._get_obs(), rw, False, {}
+        return self._get_obs(), angle_rw, False, {}
 
     def reset(self):
         high = np.array([np.pi, 1])
