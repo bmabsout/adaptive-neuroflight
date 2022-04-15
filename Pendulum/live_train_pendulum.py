@@ -49,11 +49,26 @@ def live_training(env, nn_queue, obs_queue):
         anchor_q=tf.keras.models.load_model("critic")
     )
 
+def env_func(env):
+    obs = env.reset()
+    def nn_acceptor(nn):
+        def run_step():
+            prev_obs = obs
+            action = nn([obs])[0]
+            obs, reward, done, info = env.step(action)
+            if done:
+                obs = env.reset()
+            return prev_obs, action, obs
+        return run_step
+
+    return nn_acceptor
+
 def tranceive(env, nn_queue, obs_queue, circular_buffer_size=2000):
+    env_func(env)
     next_obs = None
     while True:
         while nn_queue.empty():
-            obs = 
+            obs = env.
             if next_obs:
                     copied_next_obs=copy.deepcopy(next_obs)
                     current_traj.append((obs, copied_next_obs.prev_action))
