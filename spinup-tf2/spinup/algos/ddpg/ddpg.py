@@ -31,7 +31,7 @@ def p_mean(l, p, slack=0.0, axis=1):
     return res
 
 @tf.function
-def p_to_min(l, p=0, q=0.2):
+def p_to_min(l, p=0, q=0):
     deformator = p_mean(1.0-l, q)
     return p_mean(l, p)*deformator + (1.0-deformator)*tf.reduce_min(l)
 
@@ -244,39 +244,33 @@ def ddpg(env_fn, hp: HyperParams=HyperParams(),actor_critic=core.mlp_actor_criti
         with tf.GradientTape() as tape:
             pi = pi_network(obs1)
             pi2 = pi_network(obs2)
-            q_pi = tf.math.sqrt(tf.reduce_mean(tf.squeeze(q_network(tf.concat([obs1, pi], axis=-1)), axis=-1)**2.0))
+            q_pi = tf.reduce_mean(tf.squeeze(q_targ_network(tf.concat([obs1, pi], axis=-1)), axis=-1)**2.0)**0.5
             if anchor_q:
-                safe_q_pi = tf.math.sqrt(tf.reduce_mean(tf.squeeze(anchor_q(tf.concat([obs1, pi], axis=-1)), axis=-1)**2.0))
-                q_c = p_mean(tf.stack([q_pi, safe_q_pi]), 0.0)
+                anchor_pi = pi_network(anchor_obs1)
+                anchor_c=tf.reduce_mean(tf.squeeze(anchor_q(tf.concat([anchor_obs1, anchor_pi], axis=-1)), axis=-1)**2.0)**0.5
+                weakened_q_pi = weaken(q_pi,0.5)
+                q_c = tf.squeeze(p_mean(tf.stack([anchor_c, weakened_q_pi]), -1.0))
+                # q_c = q_pi
             else:
-                safe_q_pi = 1.0
                 q_c = q_pi
 
-            # noise = tf.random.normal(
-            #     obs1.shape, mean=0.0, stddev=np.array([
-            #         0.01,0.01,0.01,
-            #         0.01,0.01,0.01,
-            #         0.01,0.01,0.01,
-            #         0.0,0.0,0.0,0.0]),
-            # )
-            # pi_bar = pi_network(obs1+noise)
 
-            pi_diffs = tf.abs((pi-pi2))/2.0
-            # pi_bar_diffs = (tf.abs((pi-pi_bar))/2.0 + 1e-5)/(1.0+1e-5)
-            pi_diffs_c = p_mean(p_mean(1.0 - pi_diffs, 1.0), 1.0)
-            # pi_bar_c = p_mean(p_mean(1.0 - pi_bar_diffs, 1.0), 1.0)
+            noise = tf.random.normal(
+                [13], mean=0.0, stddev=np.array([
+                    0.01,0.01,0.01,
+                    0.01,0.01,0.01,
+                    0.01,0.01,0.01,
+                    0.0,0.0,0.0,0.0]),
+            )
+            pi_bar = pi_network(obs1+noise)
+
+            reg = sum(pi_network.losses)*1e-4
+            pi_diffs_c = p_mean(p_mean(1.0 - tf.abs((pi-pi2))/2.0, 1.0), 1.0)
+            pi_bar_c = p_mean(p_mean(1.0 - tf.abs((pi-pi_bar))/2.0, 1.0), 1.0)
             center_c = p_mean(p_mean(1.0 - tf.abs(pi+0.4)/1.5,1.0),1.0)
-            reg_c = tf.squeeze(p_mean(tf.stack([pi_diffs_c**1.5, weaken(center_c,0.5)],axis=1), 0.0))
-
-            # tf.print("pi_bar_c", pi_bar_c)
-            # tf.print("pi_diffs_c", pi_diffs_c)
-            # tf.print("center_c", center_c)
-            # tf.print("r",reg_c)
-            # tf.print("q",q_c)
-            # # tf.print("")
-            # reg = sum(pi_network.losses)*1e-3
-            all_c = p_to_min(tf.stack([q_c,reg_c]))
-            pi_loss = 1.0-all_c
+            reg_c = tf.squeeze(p_mean(tf.stack([pi_diffs_c**1.5, pi_bar_c, center_c],axis=1), 0.0))
+            all_c = p_to_min(tf.stack([q_c, reg_c]))
+            pi_loss = 1.0-all_c + reg
         grads = tape.gradient(pi_loss, pi_network.trainable_variables)
         grads_and_vars = zip(grads, pi_network.trainable_variables)
         pi_optimizer.apply_gradients(grads_and_vars)
@@ -355,11 +349,11 @@ def ddpg(env_fn, hp: HyperParams=HyperParams(),actor_critic=core.mlp_actor_criti
                 logger.store(LossQ=loss_q)
 
                 # Policy update
-                pi_loss, avoid_extremes, qs, safe_qs, reg = pi_update(obs1, obs2)
+                pi_loss, avoid_extremes, qs, anchor_qs, reg = pi_update(obs1, obs2)
                 logger.store(
                     LossPi=pi_loss.numpy(),
                     NormQ=qs,
-                    NormSafe=safe_qs,
+                    NormAnchor=anchor_qs,
                     AvoidExtremes=avoid_extremes,
                     Reg=reg
                 )
@@ -395,7 +389,7 @@ def ddpg(env_fn, hp: HyperParams=HyperParams(),actor_critic=core.mlp_actor_criti
             logger.log_tabular('LossPi', average_only=True)
             logger.log_tabular('LossQ', average_only=True)
             logger.log_tabular('NormQ', average_only=True)
-            logger.log_tabular('NormSafe', average_only=True)
+            logger.log_tabular('NormAnchor', average_only=True)
             logger.log_tabular('AvoidExtremes', average_only=True)
             logger.log_tabular('Time', time.time()-start_time)
             logger.log_tabular('Reg', average_only=True)

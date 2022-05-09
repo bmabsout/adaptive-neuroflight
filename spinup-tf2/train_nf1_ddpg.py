@@ -101,7 +101,7 @@ if __name__ == '__main__':
         ac_kwargs={
             "actor_hidden_sizes":(32,32),
             "critic_hidden_sizes":(512,512),
-            "obs_normalizer": np.array([500.0, 500.0, 500.0, 500.0, 500.0, 500.0, 10.0, 10.0, 10.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0])
+            "obs_normalizer": np.array([500.0, 500.0, 500.0, 500.0, 500.0, 500.0, 10.0, 10.0, 10.0, 1.0, 1.0, 1.0, 1.0])
         },
         start_steps=10000,
         replay_size=500000,

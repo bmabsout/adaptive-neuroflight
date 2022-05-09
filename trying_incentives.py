@@ -24,7 +24,7 @@ def p_mean(l, p, slack=0.0, axis=1):
     return res
 
 # @tf.function
-def p_to_min(l, p=0, q=0.2):
+def p_to_min(l, p=0, q=0):
     deformator = p_mean(1.0-l, q)
     return p_mean(l, p)*deformator + (1.0-deformator)*tf.reduce_min(l)
 
