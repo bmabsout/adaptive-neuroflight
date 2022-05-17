@@ -205,7 +205,7 @@ def ddpg(env_fn, hp: HyperParams=HyperParams(),actor_critic=core.mlp_actor_criti
     with tf.name_scope('target'):
         # Note that the action placeholder going to actor_critic here is 
         # irrelevant, because we only need q_targ(s, pi_targ(s)).
-        pi_targ_network, q_targ_network  = actor_critic(env.observation_space, env.action_space, **hp.ac_kwargs)
+        pi_targ_network, q_targ_network = actor_critic(env.observation_space, env.action_space, **hp.ac_kwargs)
 
     # make sure network and target network is using the same weights
     pi_targ_network.set_weights(pi_network.get_weights())
@@ -254,7 +254,6 @@ def ddpg(env_fn, hp: HyperParams=HyperParams(),actor_critic=core.mlp_actor_criti
             else:
                 q_c = q_pi
 
-
             noise = tf.random.normal(
                 [13], mean=0.0, stddev=np.array([
                     0.01,0.01,0.01,
@@ -264,13 +263,22 @@ def ddpg(env_fn, hp: HyperParams=HyperParams(),actor_critic=core.mlp_actor_criti
             )
             pi_bar = pi_network(obs1+noise)
 
-            reg = sum(pi_network.losses)*1e-4
+            reg = sum(pi_network.losses)*1e-5
+            # objective for regularizing the output of the nn as well as the weights
+
             pi_diffs_c = p_mean(p_mean(1.0 - tf.abs((pi-pi2))/2.0, 1.0), 1.0)
+            # objective for minimizing subsequent action differences
+
             pi_bar_c = p_mean(p_mean(1.0 - tf.abs((pi-pi_bar))/2.0, 1.0), 1.0)
-            center_c = p_mean(p_mean(1.0 - tf.abs(pi+0.4)/1.5,1.0),1.0)
+            # objective representing similar inputs should map to similar outputs
+
+            center_c = p_mean(p_mean(1.0 - (tf.abs(pi+0.4)/1.5)**2.0,1.0),1.0)
+            # objective for maintaining an output of -0.4
+            
             reg_c = tf.squeeze(p_mean(tf.stack([pi_diffs_c**1.5, pi_bar_c, center_c],axis=1), 0.0))
-            all_c = p_to_min(tf.stack([q_c, reg_c]))
-            pi_loss = 1.0-all_c + reg
+            all_c = p_to_min(tf.stack([q_c, reg_c**1.5]))
+            all_c = q_c + 0.008*pi_diffs_c + 0.005*pi_bar_c + 0.025*center_c
+            pi_loss = 1.0 - all_c + reg
         grads = tape.gradient(pi_loss, pi_network.trainable_variables)
         grads_and_vars = zip(grads, pi_network.trainable_variables)
         pi_optimizer.apply_gradients(grads_and_vars)

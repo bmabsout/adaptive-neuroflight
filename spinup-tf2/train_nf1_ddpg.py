@@ -77,7 +77,8 @@ def train_nf1(hypers):
     env.noise_sigma = 1
     save_queue = Queue()
 
-    Process(target=save_process, args=(env_id, save_queue, ckpt_dir, hypers)).start()
+    process = Process(target=save_process, args=(env_id, save_queue, ckpt_dir, hypers))
+    process.start()
     # avg_reward = 0
     def on_save(actor, critic, ckpt_id):
         save_queue.put((actor, critic, ckpt_id))
@@ -89,13 +90,18 @@ def train_nf1(hypers):
         # actor_critic=existing_actor_critic,
         hp=hypers
     )
+    print("DONEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEee")
+    print("DONEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEee")
+    env.close()
+    print("DONEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEee")
+    print("DONEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEee")
+    process.terminate()
+    print("DONEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEee")
     # return avg_reward
+# def train_n_times(hypers, n):
+
 
 if __name__ == '__main__':
-    # tf.debugging.experimental.enable_dump_debug_info(
-    #     "/tmp/tfdbg4_logdir",
-    #     tensor_debug_mode="FULL_HEALTH",
-    #     circular_buffer_size=-1)
     hypers = HyperParams(
         steps_per_epoch=10000,
         ac_kwargs={
@@ -104,11 +110,11 @@ if __name__ == '__main__':
             "obs_normalizer": np.array([500.0, 500.0, 500.0, 500.0, 500.0, 500.0, 10.0, 10.0, 10.0, 1.0, 1.0, 1.0, 1.0])
         },
         start_steps=10000,
-        replay_size=500000,
+        replay_size=1000000,
         gamma=0.9,
         polyak=0.995,
-        pi_lr=tf.optimizers.schedules.PolynomialDecay(1e-3, 1e6, end_learning_rate=0),
-        q_lr=tf.optimizers.schedules.PolynomialDecay(1e-3, 1e6, end_learning_rate=0),
+        pi_lr=tf.optimizers.schedules.PolynomialDecay(1e-3, 2e6, end_learning_rate=1e-5),
+        q_lr=tf.optimizers.schedules.PolynomialDecay(1e-3, 2e6, end_learning_rate=1e-5),
         batch_size=200,
         act_noise=0.1,
         max_ep_len=10000,
