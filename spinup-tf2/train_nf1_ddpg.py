@@ -51,37 +51,38 @@ def existing_actor_critic(*args, **kwargs):
     )
     return actor, critic 
 
-def save_process(env_id, save_queue, ckpt_dir, hypers):
+def save_process_target(env_id, save_queue):
     test_env = gym.make(env_id)
     test_env.noise_sigma = 1
     while True:
-        (actor, critic, ckpt_id) = save_queue.get()
-        save_path = os.path.join(ckpt_dir, f"ckpt_{ckpt_id}")
+        print("cheese:")
+        print(save_queue)
+        from_queue = save_queue.get()
+        if from_queue == "kill me":
+            return
+        (actor, critic, save_path, seed) = from_queue
+        print("unblocked")
+        
         critic.save(os.path.join(save_path, "critic"))
-        save_flight(test_env, hypers.seed, actor, save_path)
+        save_flight(test_env, seed, actor, save_path)
 
-
-def train_nf1(hypers):
-    signal(SIGINT, training_utils.handler)
-
+def train_nf1(env, hypers, save_queue):
     training_dir = training_utils.get_training_dir('tf2_ddpg', hypers.seed)
     print ("Storing results to ", training_dir)
 
     ckpt_dir = os.path.join(training_dir, "checkpoints")
     os.makedirs(training_dir)
 
-    env_id = "gymfc_perlin_discontinuous-v3"
-    env = gym.make(env_id)
     env.seed(hypers.seed)
 
     env.noise_sigma = 1
-    save_queue = Queue()
 
-    process = Process(target=save_process, args=(env_id, save_queue, ckpt_dir, hypers))
-    process.start()
     # avg_reward = 0
     def on_save(actor, critic, ckpt_id):
-        save_queue.put((actor, critic, ckpt_id))
+        print("on_save:")
+        print(save_queue)
+        save_path = os.path.join(ckpt_dir, f"ckpt_{ckpt_id}")
+        save_queue.put((actor, critic, save_path, hypers.seed))
 
 
     spinup.ddpg(
@@ -92,24 +93,34 @@ def train_nf1(hypers):
     )
     print("DONEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEee")
     print("DONEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEee")
+    print("DONEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEee")
+    print("DONEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEee")
+    print("DONEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEee")
+
+def train_n_times(n):
+    save_queue = Queue()
+    env_id = "gymfc_perlin_discontinuous-v3"
+    env = gym.make(env_id)
+    save_process = Process(target=save_process_target, args=(env_id, save_queue))
+    save_process.start()
+    for i in range(n):
+        train_nf1(env, generate_hypers(), save_queue)
+
+    save_queue.put("kill me")
+    save_process.join()
+    save_process.close()
     env.close()
-    print("DONEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEee")
-    print("DONEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEee")
-    process.terminate()
-    print("DONEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEee")
-    # return avg_reward
-# def train_n_times(hypers, n):
 
 
-if __name__ == '__main__':
-    hypers = HyperParams(
-        steps_per_epoch=10000,
+def generate_hypers():
+    return HyperParams(
+        steps_per_epoch=1000,
         ac_kwargs={
             "actor_hidden_sizes":(32,32),
             "critic_hidden_sizes":(512,512),
             "obs_normalizer": np.array([500.0, 500.0, 500.0, 500.0, 500.0, 500.0, 10.0, 10.0, 10.0, 1.0, 1.0, 1.0, 1.0])
         },
-        start_steps=10000,
+        start_steps=1000,
         replay_size=1000000,
         gamma=0.9,
         polyak=0.995,
@@ -118,10 +129,14 @@ if __name__ == '__main__':
         batch_size=200,
         act_noise=0.1,
         max_ep_len=10000,
-        epochs=100
+        epochs=4
     )
 
-    train_nf1(hypers)
+
+if __name__ == '__main__':
+    # train_nf1(generate_hypers())
+    signal(SIGINT, training_utils.handler)
+    train_n_times(6)
     # actor = tf.keras.models.load_model(
     #     "/data/neuroflight/CODE/adaptive-neuroflight/neuroflight/XBee/transmission/ckpt_3/actor"
     # )
