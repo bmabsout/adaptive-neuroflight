@@ -51,11 +51,10 @@ def existing_actor_critic(*args, **kwargs):
     )
     return actor, critic 
 
-def save_process_target(env_id, save_queue):
-    test_env = gym.make(env_id)
+def save_process_target(save_queue):
+    test_env = gym.make("gymfc_perlin_validation-v4")
     test_env.noise_sigma = 1
     while True:
-        print("cheese:")
         print(save_queue)
         from_queue = save_queue.get()
         if from_queue == "kill me":
@@ -101,7 +100,7 @@ def train_n_times(n):
     save_queue = Queue()
     env_id = "gymfc_perlin_discontinuous-v3"
     env = gym.make(env_id)
-    save_process = Process(target=save_process_target, args=(env_id, save_queue))
+    save_process = Process(target=save_process_target, args=(save_queue,))
     save_process.start()
     for i in range(n):
         train_nf1(env, generate_hypers(), save_queue)
@@ -114,13 +113,13 @@ def train_n_times(n):
 
 def generate_hypers():
     return HyperParams(
-        steps_per_epoch=1000,
+        steps_per_epoch=10000,
         ac_kwargs={
             "actor_hidden_sizes":(32,32),
             "critic_hidden_sizes":(512,512),
             "obs_normalizer": np.array([500.0, 500.0, 500.0, 500.0, 500.0, 500.0, 10.0, 10.0, 10.0, 1.0, 1.0, 1.0, 1.0])
         },
-        start_steps=1000,
+        start_steps=20000,
         replay_size=1000000,
         gamma=0.9,
         polyak=0.995,
@@ -129,7 +128,7 @@ def generate_hypers():
         batch_size=200,
         act_noise=0.1,
         max_ep_len=10000,
-        epochs=4
+        epochs=100
     )
 
 

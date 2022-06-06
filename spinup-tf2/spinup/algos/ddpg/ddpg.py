@@ -46,6 +46,12 @@ def p_to_min(l, p=0, q=0):
 def weaken(weaken_me, weaken_by):
     return (weaken_me + weaken_by)/(1.0 + weaken_by)
 
+@tf.custom_gradient
+def scale_gradient(x, scale):
+  grad = lambda dy: (dy * scale, None)
+  return x, grad
+
+
 class ReplayBuffer:
     """
     A simple FIFO experience replay buffer for DDPG agents.
@@ -85,8 +91,8 @@ class HyperParams:
             replay_size=int(1e5),
             gamma=0.9,
             polyak=0.995,
-            pi_lr=1e-3,
-            q_lr=1e-3,
+            pi_lr=1e-4,
+            q_lr=1e-4,
             batch_size=100,
             start_steps=10000,
             act_noise=0.1,
@@ -240,16 +246,16 @@ def ddpg(env_fn, hp: HyperParams=HyperParams(),actor_critic=core.mlp_actor_criti
         return q_loss, q
 
     @tf.function
-    def pi_update(obs1, obs2):
+    def pi_update(obs1, obs2, debug):
         with tf.GradientTape() as tape:
             pi = pi_network(obs1)
             pi2 = pi_network(obs2)
-            q_pi = tf.reduce_mean(tf.squeeze(q_targ_network(tf.concat([obs1, pi], axis=-1)), axis=-1)**2.0)**0.5
+            q_pi = tf.reduce_mean(tf.squeeze(q_targ_network(tf.concat([obs1, pi], axis=-1)), axis=-1)**2.0)
             if anchor_q:
                 anchor_pi = pi_network(anchor_obs1)
-                anchor_c=tf.reduce_mean(tf.squeeze(anchor_q(tf.concat([anchor_obs1, anchor_pi], axis=-1)), axis=-1)**2.0)**0.5
+                anchor_c=tf.reduce_mean(tf.squeeze(anchor_q(tf.concat([anchor_obs1, anchor_pi], axis=-1)), axis=-1))
                 weakened_q_pi = weaken(q_pi,0.5)
-                q_c = tf.squeeze(p_mean(tf.stack([anchor_c, weakened_q_pi]), -1.0))
+                q_c = tf.squeeze(p_mean(tf.stack([anchor_c, weakened_q_pi]), 0.0))
                 # q_c = q_pi
             else:
                 q_c = q_pi
@@ -262,27 +268,38 @@ def ddpg(env_fn, hp: HyperParams=HyperParams(),actor_critic=core.mlp_actor_criti
                     0.0,0.0,0.0,0.0]),
             )
             pi_bar = pi_network(obs1+noise)
-
-            reg = sum(pi_network.losses)*1e-5
+            var_sum = sum(map(lambda v: tf.reduce_mean(tf.abs(v)),pi_network.trainable_variables))
+            pi_weight_c = tf.stack([4.0/(4.0+var_sum)])
+            before_tanh_c = tf.stack([4.0/(4.0+sum(pi_network.losses))])
             # objective for regularizing the output of the nn as well as the weights
+            # tf.print(pi_network.trainable_variables)
+            # tf.print(pi_network.losses)
 
-            pi_diffs_c = p_mean(p_mean(1.0 - tf.abs((pi-pi2))/2.0, 1.0), 1.0)
+            temporal_c = p_mean(p_mean(0.01/(0.01+tf.abs((pi-pi2))/2.), 0.), 0.)
             # objective for minimizing subsequent action differences
 
-            pi_bar_c = p_mean(p_mean(1.0 - tf.abs((pi-pi_bar))/2.0, 1.0), 1.0)
+            spatial_c = p_mean(p_mean(1.0 - tf.abs((pi-pi_bar))/2., 1.), 1.)
             # objective representing similar inputs should map to similar outputs
 
-            center_c = p_mean(p_mean(1.0 - (tf.abs(pi+0.4)/1.5)**2.0,1.0),1.0)
-            # objective for maintaining an output of -0.4
+            center_c = p_mean(p_mean(1.0 - (tf.abs(pi+0.9)/2.0),1.),1.)**0.5
+            # objective for maintaining an output of -0.9
             
-            reg_c = tf.squeeze(p_mean(tf.stack([pi_diffs_c**1.5, pi_bar_c, center_c],axis=1), 0.0))
-            all_c = p_to_min(tf.stack([q_c, reg_c**1.5]))
-            all_c = q_c + 0.008*pi_diffs_c + 0.005*pi_bar_c + 0.025*center_c
-            pi_loss = 1.0 - all_c + reg
+            reg_c = tf.squeeze(p_mean(tf.stack([temporal_c, spatial_c, before_tanh_c],axis=1), 0.0))**0.5
+            all_c = p_mean(tf.stack([q_c**2.0, scale_gradient(reg_c, 0.01)]), -1.0)
+            # all_c = q_c + 0.008*pi_diffs_c + 0.005*pi_bar_c + 0.025*center_c
+            # if debug:
+            #     tf.print("temporal_c", temporal_c)
+            #     tf.print("spatial_c", spatial_c)
+            #     tf.print("center_c", center_c)
+            #     tf.print("pi_weight_c", pi_weight_c)
+            #     tf.print("before_tanh_c", before_tanh_c)
+            #     tf.print("reg_c", reg_c)
+            #     tf.print("q_c", q_c)
+            pi_loss = 1.0 - all_c
         grads = tape.gradient(pi_loss, pi_network.trainable_variables)
         grads_and_vars = zip(grads, pi_network.trainable_variables)
         pi_optimizer.apply_gradients(grads_and_vars)
-        return pi_loss, center_c, q_c, 0, reg_c
+        return all_c, q_c, reg_c, temporal_c, spatial_c, before_tanh_c, pi_weight_c
 
     def get_action(o, noise_scale):
         minus_1_to_1 = pi_network(tf.constant(o.reshape(1,-1))).numpy()[0]
@@ -344,7 +361,7 @@ def ddpg(env_fn, hp: HyperParams=HyperParams(),actor_critic=core.mlp_actor_criti
             Perform all DDPG updates at the end of the trajectory,
             in accordance with tuning done by TD3 paper authors.
             """
-            for _ in range(hp.train_steps):
+            for train_step in range(hp.train_steps):
                 batch = replay_buffer.sample_batch(hp.batch_size)
 
                 obs1 = tf.constant(batch['obs1'])
@@ -357,13 +374,16 @@ def ddpg(env_fn, hp: HyperParams=HyperParams(),actor_critic=core.mlp_actor_criti
                 logger.store(LossQ=loss_q)
 
                 # Policy update
-                pi_loss, avoid_extremes, qs, anchor_qs, reg = pi_update(obs1, obs2)
+                all_c, q_c, reg_c, temporal_c, spatial_c, center_c, pi_weight_c = pi_update(obs1, obs2,(train_step+1)%20 == 0)
+
                 logger.store(
-                    LossPi=pi_loss.numpy(),
-                    NormQ=qs,
-                    NormAnchor=anchor_qs,
-                    AvoidExtremes=avoid_extremes,
-                    Reg=reg
+                    All=all_c,
+                    Q=q_c,
+                    Reg=reg_c,
+                    Temporal=temporal_c,
+                    Spacial=spatial_c,
+                    Center=center_c,
+                    Pi_weight=pi_weight_c
                 )
 
                 # target update
@@ -392,15 +412,17 @@ def ddpg(env_fn, hp: HyperParams=HyperParams(),actor_critic=core.mlp_actor_criti
             logger.log_tabular('EpRet', average_only=True)
             # logger.log_tabular('TestEpRet', with_min_and_max=True)
             logger.log_tabular('EpLen', average_only=True)
-            # logger.log_tabular('TestEpLen', average_only=True)
-            logger.log_tabular('TotalEnvInteracts', t)
-            logger.log_tabular('LossPi', average_only=True)
-            logger.log_tabular('LossQ', average_only=True)
-            logger.log_tabular('NormQ', average_only=True)
-            logger.log_tabular('NormAnchor', average_only=True)
-            logger.log_tabular('AvoidExtremes', average_only=True)
             logger.log_tabular('Time', time.time()-start_time)
+            # logger.log_tabular('TestEpLen', average_only=True)
+            # logger.log_tabular('TotalEnvInteracts', t)
+            logger.log_tabular('Temporal', average_only=True)
+            logger.log_tabular('Spacial', average_only=True)
+            logger.log_tabular('Center', average_only=True)
+            logger.log_tabular('Pi_weight', average_only=True)
             logger.log_tabular('Reg', average_only=True)
+            logger.log_tabular('Q', average_only=True)
+            logger.log_tabular('All', average_only=True)
+
             logger.dump_tabular()
 
 if __name__ == '__main__':

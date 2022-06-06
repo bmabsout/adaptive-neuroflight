@@ -10,18 +10,18 @@ def mlp_functional(inputs, hidden_sizes=(32,), activation='relu', use_bias=True,
         layer = tf.keras.layers.Dense(
             units=hidden_size,
             activation=activation,
-            kernel_regularizer=regularizers.l1_l2(l1=1e-6, l2=1e-5),
-            bias_regularizer=regularizers.l2(1e-5),
-            activity_regularizer=regularizers.l2(1e-6)
+            # kernel_regularizer=regularizers.l1_l2(l1=1e-5, l2=1e-4),
+            # bias_regularizer=regularizers.l2(1e-3),
+            # activity_regularizer=regularizers.l2(5e-3)
             #kernel_initializer=tf.keras.initializers.RandomUniform(minval=-glorot_limit, maxval=glorot_limit)
     #tf.keras.initializers.RandomNormal(stddev=0.001)
         )(layer)
    # glorot_limit = np.sqrt(6 / hidden_sizes[-1] + layer.shape[1])*1e-3
     outputs = tf.keras.layers.Dense(
         units=hidden_sizes[-1],
-        kernel_regularizer=regularizers.l1_l2(l1=1e-6, l2=1e-5),
-        bias_regularizer=regularizers.l2(1e-5),
-        activity_regularizer=regularizers.l2(output_reg),
+        # kernel_regularizer=regularizers.l1_l2(l1=1e-5, l2=1e-4),
+        # bias_regularizer=regularizers.l2(1e-3),
+        activity_regularizer=regularizers.l1(output_reg),
         activation=output_activation,
         #kernel_initializer=tf.keras.initializers.RandomUniform(minval=-glorot_limit, maxval=glorot_limit),
         use_bias=use_bias,
@@ -42,8 +42,8 @@ def actor(obs_space, act_space, hidden_sizes, obs_normalizer):
     inputs = tf.keras.Input((obs_space.shape[0],))/obs_normalizer
     # unscaled = unscale_by_space(inputs, obs_space)
     linear_output = mlp_functional(inputs, hidden_sizes +(act_space.shape[0],),
-        use_bias=False, output_activation=None, output_reg=2e-2)
-    tanhed = tf.keras.layers.Activation("tanh")(linear_output)
+        use_bias=True, output_activation=None, output_reg=1, activation="relu")
+    tanhed = tf.keras.layers.Activation("tanh")(linear_output - 2)
     # clipped = tf.keras.layers.Lambda(lambda t: tf.clip_by_value(
     #     t, -1.0, 1.0))(normed)
     # scaled = scale_by_space(normed, act_space)
