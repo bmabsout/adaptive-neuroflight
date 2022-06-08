@@ -116,10 +116,10 @@ def generate_hypers():
         steps_per_epoch=10000,
         ac_kwargs={
             "actor_hidden_sizes":(32,32),
-            "critic_hidden_sizes":(512,512),
+            "critic_hidden_sizes":(400,300),
             "obs_normalizer": np.array([500.0, 500.0, 500.0, 500.0, 500.0, 500.0, 10.0, 10.0, 10.0, 1.0, 1.0, 1.0, 1.0])
         },
-        start_steps=20000,
+        start_steps=10000,
         replay_size=1000000,
         gamma=0.9,
         polyak=0.995,

@@ -250,7 +250,7 @@ def ddpg(env_fn, hp: HyperParams=HyperParams(),actor_critic=core.mlp_actor_criti
         with tf.GradientTape() as tape:
             pi = pi_network(obs1)
             pi2 = pi_network(obs2)
-            q_pi = tf.reduce_mean(tf.squeeze(q_targ_network(tf.concat([obs1, pi], axis=-1)), axis=-1)**2.0)
+            q_pi = tf.reduce_mean(tf.squeeze(q_targ_network(tf.concat([obs1, pi], axis=-1)), axis=-1)**0.5)**2.0
             if anchor_q:
                 anchor_pi = pi_network(anchor_obs1)
                 anchor_c=tf.reduce_mean(tf.squeeze(anchor_q(tf.concat([anchor_obs1, anchor_pi], axis=-1)), axis=-1))
@@ -262,9 +262,9 @@ def ddpg(env_fn, hp: HyperParams=HyperParams(),actor_critic=core.mlp_actor_criti
 
             noise = tf.random.normal(
                 [13], mean=0.0, stddev=np.array([
-                    0.01,0.01,0.01,
-                    0.01,0.01,0.01,
-                    0.01,0.01,0.01,
+                    1.0,1.0,1.0,
+                    1.0,1.0,1.0,
+                    0.1,0.1,0.1,
                     0.0,0.0,0.0,0.0]),
             )
             pi_bar = pi_network(obs1+noise)
@@ -275,17 +275,18 @@ def ddpg(env_fn, hp: HyperParams=HyperParams(),actor_critic=core.mlp_actor_criti
             # tf.print(pi_network.trainable_variables)
             # tf.print(pi_network.losses)
 
-            temporal_c = p_mean(p_mean(0.01/(0.01+tf.abs((pi-pi2))/2.), 0.), 0.)
+            temporal_c = p_mean(p_mean(0.01/(0.01+tf.abs(pi-pi2)), 0.), 0.)**0.5
             # objective for minimizing subsequent action differences
 
-            spatial_c = p_mean(p_mean(1.0 - tf.abs((pi-pi_bar))/2., 1.), 1.)
+            spatial_c = p_mean(p_mean(0.01/(0.01+tf.abs(pi-pi_bar)), 0.), 0.)**0.5
             # objective representing similar inputs should map to similar outputs
 
             center_c = p_mean(p_mean(1.0 - (tf.abs(pi+0.9)/2.0),1.),1.)**0.5
             # objective for maintaining an output of -0.9
             
-            reg_c = tf.squeeze(p_mean(tf.stack([temporal_c, spatial_c, before_tanh_c],axis=1), 0.0))**0.5
-            all_c = p_mean(tf.stack([q_c**2.0, scale_gradient(reg_c, 0.01)]), -1.0)
+            reg_c = tf.squeeze(p_mean(tf.stack([spatial_c, temporal_c, before_tanh_c],axis=1), 0.0))
+            # all_c = p_to_min(tf.stack([q_c, reg_c]), q=0.0)
+            all_c = p_mean(tf.stack([scale_gradient(q_c, 1e3), reg_c]), 0.0)
             # all_c = q_c + 0.008*pi_diffs_c + 0.005*pi_bar_c + 0.025*center_c
             # if debug:
             #     tf.print("temporal_c", temporal_c)
@@ -297,6 +298,7 @@ def ddpg(env_fn, hp: HyperParams=HyperParams(),actor_critic=core.mlp_actor_criti
             #     tf.print("q_c", q_c)
             pi_loss = 1.0 - all_c
         grads = tape.gradient(pi_loss, pi_network.trainable_variables)
+        # tf.print(grads)
         grads_and_vars = zip(grads, pi_network.trainable_variables)
         pi_optimizer.apply_gradients(grads_and_vars)
         return all_c, q_c, reg_c, temporal_c, spatial_c, before_tanh_c, pi_weight_c
