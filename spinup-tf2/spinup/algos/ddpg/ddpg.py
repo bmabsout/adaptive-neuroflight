@@ -275,7 +275,7 @@ def ddpg(env_fn, hp: HyperParams=HyperParams(),actor_critic=core.mlp_actor_criti
             # tf.print(pi_network.trainable_variables)
             # tf.print(pi_network.losses)
 
-            temporal_c = p_mean(p_mean((0.1/(0.1+tf.abs(pi-pi2)))**2.0, 1.0), 1.0)
+            temporal_c = p_mean(p_mean((0.2/(0.2+tf.abs(pi-pi2)))**2.0, 1.0), 1.0)
             # objective for minimizing subsequent action differences
 
             spatial_c = p_mean(p_mean(0.1/(0.1+tf.abs(pi-pi_bar)), 0.), 0.)
