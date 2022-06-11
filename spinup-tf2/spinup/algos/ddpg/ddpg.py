@@ -253,7 +253,7 @@ def ddpg(env_fn, hp: HyperParams=HyperParams(),actor_critic=core.mlp_actor_criti
             q_pi = tf.reduce_mean(q_targ_network(tf.concat([obs1, pi], axis=-1))**0.5)**2.0
             if anchor_q:
                 anchor_pi = pi_network(anchor_obs1)
-                anchor_c=tf.reduce_mean(anchor_q(tf.concat([anchor_obs1, anchor_pi], axis=-1))**0.5)
+                anchor_c=tf.reduce_mean(anchor_q(tf.concat([anchor_obs1, anchor_pi], axis=-1))**0.5)**2.0
                 weakened_q_pi = weaken(q_pi,0.5)
                 q_c = tf.squeeze(p_mean(tf.stack([anchor_c, weakened_q_pi]), 0.0))
                 # q_c = q_pi
@@ -275,7 +275,7 @@ def ddpg(env_fn, hp: HyperParams=HyperParams(),actor_critic=core.mlp_actor_criti
             # tf.print(pi_network.trainable_variables)
             # tf.print(pi_network.losses)
 
-            temporal_c = p_mean(p_mean((0.2/(0.2+tf.abs(pi-pi2)))**2.0, 1.0), 1.0)
+            temporal_c = p_mean(p_mean((0.1/(0.1+tf.abs(pi-pi2)))**2.0, 1.0), 1.0)
             # objective for minimizing subsequent action differences
 
             spatial_c = p_mean(p_mean(0.1/(0.1+tf.abs(pi-pi_bar)), 0.), 0.)
@@ -403,8 +403,7 @@ def ddpg(env_fn, hp: HyperParams=HyperParams(),actor_critic=core.mlp_actor_criti
 
             # Save model
             if (epoch % save_freq == 0) or (epoch == hp.epochs-1):
-                pickle.dump( replay_buffer, open( "replay.p", "wb" ) )
-                on_save(pi_network, q_network, epoch//save_freq)
+                on_save(pi_network, q_network, epoch//save_freq, replay_buffer)
             #     logger.save_state({'env': env}, None)
 
             # Test the performance of the deterministic version of the agent.

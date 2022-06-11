@@ -13,6 +13,7 @@ from neuroflight_trainer.rl_algs import training_utils
 from neuroflight_trainer.validation.fc_logging_utils import FlightLog
 from multiprocessing import Process, Queue
 import tensorflow as tf
+import pickle
 
 def save_flight(env, seed, actor, save_location, num_episodes=2):
     print("saving to:", save_location)
@@ -70,17 +71,19 @@ def train_nf1(env, hypers, save_queue):
     print ("Storing results to ", training_dir)
 
     ckpt_dir = os.path.join(training_dir, "checkpoints")
-    os.makedirs(training_dir)
+    os.makedirs(ckpt_dir)
 
     env.seed(hypers.seed)
 
     env.noise_sigma = 1
 
     # avg_reward = 0
-    def on_save(actor, critic, ckpt_id):
+    def on_save(actor, critic, ckpt_id, replay_buffer):
         print("on_save:")
         print(save_queue)
         save_path = os.path.join(ckpt_dir, f"ckpt_{ckpt_id}")
+        with open( os.path.join(ckpt_dir, "replay.p"), "wb" ) as replay_file:
+            pickle.dump( replay_buffer, replay_file)
         save_queue.put((actor, critic, save_path, hypers.seed))
 
 
@@ -123,12 +126,12 @@ def generate_hypers():
         replay_size=1000000,
         gamma=0.9,
         polyak=0.995,
-        pi_lr=tf.optimizers.schedules.PolynomialDecay(1e-3, 2e6, end_learning_rate=1e-5),
-        q_lr=tf.optimizers.schedules.PolynomialDecay(1e-3, 2e6, end_learning_rate=1e-5),
+        pi_lr=tf.optimizers.schedules.PolynomialDecay(1e-3, 1e6, end_learning_rate=1e-4),
+        q_lr=tf.optimizers.schedules.PolynomialDecay(1e-3, 1e6, end_learning_rate=1e-4),
         batch_size=200,
         act_noise=0.1,
         max_ep_len=10000,
-        epochs=100
+        epochs=150
     )
 
 
