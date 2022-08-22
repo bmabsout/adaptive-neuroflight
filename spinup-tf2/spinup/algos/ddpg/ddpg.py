@@ -87,6 +87,11 @@ class HyperParams:
             ac_kwargs={"actor_hidden_sizes":(32,32), "critic_hidden_sizes":(512,512)},
             seed=int(time.time()* 1e5) % int(1e6),
             steps_per_epoch=5000,
+            pi_bar_variance=[
+                1.0,1.0,1.0,
+                1.0,1.0,1.0,
+                0.1,0.1,0.1,
+                0.0,0.0,0.0,0.0],
             epochs=100,
             replay_size=int(1e5),
             gamma=0.9,
@@ -103,6 +108,7 @@ class HyperParams:
         self.ac_kwargs = ac_kwargs
         self.seed = seed
         self.steps_per_epoch = steps_per_epoch
+        self.pi_bar_variance = pi_bar_variance
         self.epochs = epochs
         self.replay_size = replay_size
         self.gamma = gamma
@@ -206,6 +212,8 @@ def ddpg(env_fn, hp: HyperParams=HyperParams(),actor_critic=core.mlp_actor_criti
     # Main outputs from computation graph
     with tf.name_scope('main'):
         pi_network, q_network = actor_critic(env.observation_space, env.action_space, **hp.ac_kwargs)
+        if anchor_q:
+            anchor_targ_network = tf.keras.models.clone_model(anchor_q)
     
     # Target networks
     with tf.name_scope('target'):
@@ -216,13 +224,17 @@ def ddpg(env_fn, hp: HyperParams=HyperParams(),actor_critic=core.mlp_actor_criti
     # make sure network and target network is using the same weights
     pi_targ_network.set_weights(pi_network.get_weights())
     q_targ_network.set_weights(q_targ_network.get_weights())
+    if anchor_q:
+        anchor_targ_network.set_weights(anchor_q.get_weights())
 
     # Experience buffer
     replay_buffer = ReplayBuffer(obs_dim=obs_dim, act_dim=act_dim, size=hp.replay_size)
-
+    anchor_replay = pickle.load( open( "replay.p", "rb" ) )
     # Separate train ops for pi, q
     pi_optimizer = tf.keras.optimizers.Adam(learning_rate=hp.pi_lr)
     q_optimizer = tf.keras.optimizers.Adam(learning_rate=hp.q_lr)
+    if anchor_q:
+        anchor_q_optimizer = tf.keras.optimizers.Adam(learning_rate=hp.q_lr)
 
     # Polyak averaging for target variables
     @tf.function
@@ -246,31 +258,39 @@ def ddpg(env_fn, hp: HyperParams=HyperParams(),actor_critic=core.mlp_actor_criti
         return q_loss, q
 
     @tf.function
-    def pi_update(obs1, obs2, debug):
+    def anchor_q_update(obs1, obs2, acts, rews, dones):
+        with tf.GradientTape() as tape:
+            q = tf.squeeze(anchor_q(tf.concat([obs1, acts], axis=-1)), axis=1)
+            pi_targ = pi_targ_network(obs2)
+            q_pi_targ = tf.squeeze(anchor_targ_network(tf.concat([obs2, pi_targ], axis=-1)), axis=1)
+            backup = tf.stop_gradient(rews/max_q_val + (1 - d)*hp.gamma * q_pi_targ)
+            q_loss = tf.reduce_mean((q-backup)**2) #+ sum(q_network.losses)*0.1
+        grads = tape.gradient(q_loss, anchor_q.trainable_variables)
+        grads_and_vars = zip(grads, anchor_q.trainable_variables)
+        anchor_q_optimizer.apply_gradients(grads_and_vars)
+        return q_loss, q
+
+
+    @tf.function
+    def pi_update(obs1, obs2, anchor_obs1, debug=False):
         with tf.GradientTape() as tape:
             pi = pi_network(obs1)
             pi2 = pi_network(obs2)
-            q_pi = tf.reduce_mean(q_targ_network(tf.concat([obs1, pi], axis=-1))**0.5)**2.0
+            q_c = tf.stack([1.0])
+            # if loss_q < 1e-4:
+            q_c = tf.stack([tf.reduce_mean(q_targ_network(tf.concat([obs1, pi], axis=-1))**0.5)**2.0])
+            aq_c = tf.stack([1.0])
             if anchor_q:
-                anchor_pi = pi_network(anchor_obs1)
-                anchor_c=tf.reduce_mean(anchor_q(tf.concat([anchor_obs1, anchor_pi], axis=-1))**0.5)**2.0
-                weakened_q_pi = weaken(q_pi,0.5)
-                q_c = tf.squeeze(p_mean(tf.stack([anchor_c, weakened_q_pi]), 0.0))
-                # q_c = q_pi
-            else:
-                q_c = q_pi
+                pi_anchor = pi_network(anchor_obs1)
+                aq_c=tf.stack([tf.reduce_mean(anchor_targ_network(tf.concat([obs1, pi], axis=-1))**0.5)])**2.0
 
             noise = tf.random.normal(
-                [13], mean=0.0, stddev=np.array([
-                    1.0,1.0,1.0,
-                    1.0,1.0,1.0,
-                    0.1,0.1,0.1,
-                    0.0,0.0,0.0,0.0]),
+                [len(hp.pi_bar_variance)], mean=0.0, stddev=np.array(hp.pi_bar_variance),
             )
             pi_bar = pi_network(obs1+noise)
-            var_sum = sum(map(lambda v: tf.reduce_mean(tf.abs(v)),pi_network.trainable_variables))
-            pi_weight_c = tf.stack([10.0/(10.0+var_sum)])**2.0
-            before_tanh_c = tf.stack([(20.0/(20.0+sum(pi_network.losses)))**4.0])
+            var_sum = sum(map(lambda v: tf.reduce_mean(tf.abs(v)**2.0),pi_network.trainable_variables))
+            pi_weight_c = tf.stack([50.0/(50.0+var_sum)])**2.0
+            before_tanh_c = tf.stack([(20.0/(20.0+sum(pi_network.losses)))**2.0])
             # objective for regularizing the output of the nn as well as the weights
             # tf.print(pi_network.trainable_variables)
             # tf.print(pi_network.losses)
@@ -286,20 +306,19 @@ def ddpg(env_fn, hp: HyperParams=HyperParams(),actor_critic=core.mlp_actor_criti
 
             reg_c = tf.squeeze(p_mean(tf.stack([spatial_c, temporal_c, before_tanh_c],axis=1), 0.0))
             # all_c = p_to_min(tf.stack([q_c, reg_c]), q=0.0)
-            all_c = p_mean(tf.stack([tf.stack([scale_gradient(q_c, 3e2)]), scale_gradient(before_tanh_c, 3.0), spatial_c, scale_gradient(temporal_c, 1.0)], axis=1), 0.0)
+            all_c = p_mean(tf.stack([ scale_gradient(aq_c, 3e2), scale_gradient(q_c, 3e2),scale_gradient(before_tanh_c, 3.0)], axis=1), 0.0)
             # all_c = q_c + 0.008*pi_diffs_c + 0.005*pi_bar_c + 0.025*center_c
-            # if debug:
-            #     tf.print("temporal_c", temporal_c)
-            #     tf.print("spatial_c", spatial_c)
-            #     tf.print("center_c", center_c)
-            #     tf.print("pi_weight_c", pi_weight_c)
-            #     tf.print("before_tanh_c", before_tanh_c)
-            #     tf.print("reg_c", reg_c)
-            #     tf.print("q_c", q_c)
+            if debug:
+                tf.print("temporal_c", temporal_c)
+                tf.print("spatial_c", spatial_c)
+                tf.print("center_c", center_c)
+                tf.print("pi_weight_c", pi_weight_c)
+                tf.print("before_tanh_c", before_tanh_c)
+                tf.print("reg_c", reg_c)
+                tf.print("aq_c", aq_c)
+                tf.print("q_c", q_c)
             pi_loss = 1.0 - all_c
         grads = tape.gradient(pi_loss, pi_network.trainable_variables)
-        # tf.print(pi_loss)
-        # tf.print(grads)
         grads_and_vars = zip(grads, pi_network.trainable_variables)
         pi_optimizer.apply_gradients(grads_and_vars)
         return all_c, q_c, reg_c, temporal_c, spatial_c, before_tanh_c, pi_weight_c
@@ -372,16 +391,27 @@ def ddpg(env_fn, hp: HyperParams=HyperParams(),actor_critic=core.mlp_actor_criti
                 acts = tf.constant(batch['acts'])
                 rews = tf.constant(batch['rews'])
                 dones = tf.constant(batch['done'])
+
+                anchor_obs_batch = anchor_replay.sample_batch(hp.batch_size)
+                anchor_obs1 = tf.constant(anchor_obs_batch['obs1'])
+                anchor_obs2 = tf.constant(anchor_obs_batch['obs2'])
+                anchor_acts = tf.constant(anchor_obs_batch['acts'])
+                anchor_rews = tf.constant(anchor_obs_batch['rews'])
+                anchor_dones = tf.constant(anchor_obs_batch['done'])
                 # Q-learning update
                 loss_q, q_vals = q_update(obs1, obs2, acts, rews, dones)
+                # if anchor_q:
+                #     loss_anchor_q, anchor_q_vals = anchor_q_update(anchor_obs1, anchor_obs2, anchor_acts, anchor_rews, anchor_dones)
                 logger.store(LossQ=loss_q)
+                # logger.store(LossAQ=loss_anchor_q)
 
                 # Policy update
-                all_c, q_c, reg_c, temporal_c, spatial_c, center_c, pi_weight_c = pi_update(obs1, obs2,(train_step+1)%20 == 0)
+                all_c, q_c, reg_c, temporal_c, spatial_c, center_c, pi_weight_c = pi_update(obs1, obs2, anchor_obs1, (train_step+1)%20 == 0)
 
                 logger.store(
                     All=all_c,
                     Q=q_c,
+                    # AQ=anchor_q_vals,
                     Reg=reg_c,
                     Temporal=temporal_c,
                     Spatial=spatial_c,
@@ -412,18 +442,19 @@ def ddpg(env_fn, hp: HyperParams=HyperParams(),actor_critic=core.mlp_actor_criti
             # Log info about epoch
             logger.log_tabular('Epoch', epoch)
             logger.log_tabular('EpRet', average_only=True)
-            # logger.log_tabular('TestEpRet', with_min_and_max=True)
             logger.log_tabular('EpLen', average_only=True)
             logger.log_tabular('Time', time.time()-start_time)
-            # logger.log_tabular('TestEpLen', average_only=True)
-            # logger.log_tabular('TotalEnvInteracts', t)
+            logger.log_tabular('TotalEnvInteracts', t)
             logger.log_tabular('Temporal', average_only=True)
             logger.log_tabular('Spatial', average_only=True)
             logger.log_tabular('Center', average_only=True)
             logger.log_tabular('Pi_weight', average_only=True)
             logger.log_tabular('Reg', average_only=True)
             logger.log_tabular('Q', average_only=True)
+            # logger.log_tabular('AQ', average_only=True)
             logger.log_tabular('All', average_only=True)
+            logger.log_tabular('LossQ', average_only=True)
+            # logger.log_tabular('LossAQ', average_only=True)
 
             logger.dump_tabular()
 

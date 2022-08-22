@@ -11,7 +11,7 @@ import tensorflow as tf
 
 def existing_actor():
     return tf.keras.models.load_model(
-        "/data/neuroflight/CODE/gymfc-nf1/training_data/results/tf2_ddpg_cf469f40_s880435_t220609-235519/checkpoints/ckpt_99/actor"
+        "/data/neuroflight/CODE/gymfc-nf1/training_data/results/tf2_ddpg_cff12c6b_s820484_t220611-080203/checkpoints/ckpt_61/actor"
     )
 
 def save_flight():
