@@ -7,7 +7,7 @@ import neuroflight_trainer.gyms
 import os
 import random
 random.seed(0)
-from train_nf1_ddpg import train_nf1
+from train_nf1_ddpg_old import train_nf1
 # from spinup.utils.run_utils import setup_logger_kwargs
 
 num_step = 300_000
@@ -18,8 +18,8 @@ hyperparams_possibilities = {
     "replay_size":     lambda: random.choice([100_000, 500_000, 1000_000, 5000_000]),
     "gamma":           lambda: random.choice([0.8, 0.9, 0.95, 0.99]),
     "polyak":          lambda: random.choice([0.5, 0.9, 0.95, 0.99, 0.995]),
-    "pi_lr":           lambda: random.choice([5e-4, 1e-3, 3e-3, 5e-3]),
-    "q_lr":            lambda: random.choice([5e-4, 1e-3, 3e-3, 5e-3]),
+    "pi_lr":           lambda: random.choice([1e-4, 5e-4, 1e-3, 3e-3, 5e-3]),
+    "q_lr":            lambda: random.choice([1e-4, 5e-4, 1e-3, 3e-3, 5e-3]),
     "batch_size":      lambda: random.choice([50, 100, 200, 400]),
     "act_noise":       lambda: random.choice([0.01, 0.05, 0.1, 0.2]),
     "max_ep_len":      lambda: 10000,

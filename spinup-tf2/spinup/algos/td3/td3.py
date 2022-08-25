@@ -42,7 +42,7 @@ Deep Deterministic Policy Gradient (DDPG)
 def td3(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(), seed=0, 
          steps_per_epoch=5000, epochs=100, replay_size=int(1e6), gamma=0.99, 
          polyak=0.995, pi_lr=1e-3, q_lr=1e-3, batch_size=100, start_steps=10000,  noise_clip=0.5,
-         act_noise=0.1, target_noise=0.2, max_ep_len=1000, logger_kwargs=dict(), save_freq=1):
+         act_noise=0.1, target_noise=0.2, max_ep_len=1000, logger_kwargs=dict(), save_freq=1, on_save=lambda *_:(), anchor_q=None):
     """
     Args:
         env_fn : A function which creates a copy of the environment.
@@ -91,7 +91,7 @@ def td3(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(), seed=0,
     """
 
     logger = EpochLogger(**logger_kwargs)
-    logger.save_config(locals())
+    # logger.save_config(locals())
 
     tf.random.set_seed(seed)
     np.random.seed(seed)
@@ -144,13 +144,12 @@ def td3(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(), seed=0,
             q2 = tf.squeeze(q2_network(tf.concat([obs1, acts], axis=-1)), axis=1)
             q1_loss = tf.reduce_mean((q1-backup)**2)
             q2_loss = tf.reduce_mean((q2-backup)**2)
-            tf.print("q1:",q1)
-            tf.print("backup:",backup)
+            # tf.print("q1:",q1)
+            # tf.print("backup:",backup)
             q_loss = q1_loss + q2_loss
         qs_trainable_vars = q1_network.trainable_variables + q2_network.trainable_variables
         grads = tape.gradient(q_loss, qs_trainable_vars)
-        grads_and_vars = zip(grads, qs_trainable_vars)
-        q_optimizer.apply_gradients(grads_and_vars)
+        q_optimizer.apply_gradients(zip(grads, qs_trainable_vars))
         return q_loss, q1
 
     @tf.function
@@ -158,7 +157,11 @@ def td3(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(), seed=0,
         with tf.GradientTape() as tape:
             pi = act_limit * pi_network(obs)
             q_pi = tf.squeeze(q1_network(tf.concat([obs, pi], axis=-1)), axis=1)
-            pi_loss = -tf.reduce_mean(q_pi)
+            anchor_loss = 0.0
+            if anchor_q:
+                anchor_q_pi = tf.squeeze(anchor_q(tf.concat([obs, pi], axis=-1)), axis=1)
+                anchor_loss = -tf.reduce_mean(anchor_q_pi)
+            pi_loss = -tf.reduce_mean(q_pi)*3 + anchor_loss
         grads = tape.gradient(pi_loss, pi_network.trainable_variables)
         grads_and_vars = zip(grads, pi_network.trainable_variables)
         pi_optimizer.apply_gradients(grads_and_vars)
@@ -245,18 +248,19 @@ def td3(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(), seed=0,
             epoch = t // steps_per_epoch
 
             # Save model
-            # if (epoch % save_freq == 0) or (epoch == epochs-1):
-            #     logger.save_state({'env': env}, None)
+            if (epoch % save_freq == 0) or (epoch == epochs-1):
+                on_save(pi_network, q1_network, epoch//save_freq, replay_buffer)
+                # logger.save_state({'env': env}, None)
 
             # Test the performance of the deterministic version of the agent.
-            test_agent()
+            # test_agent()
 
             # Log info about epoch
             logger.log_tabular('Epoch', epoch)
             logger.log_tabular('EpRet', with_min_and_max=True)
-            logger.log_tabular('TestEpRet', with_min_and_max=True)
+            # logger.log_tabular('TestEpRet', with_min_and_max=True)
             logger.log_tabular('EpLen', average_only=True)
-            logger.log_tabular('TestEpLen', average_only=True)
+            # logger.log_tabular('TestEpLen', average_only=True)
             logger.log_tabular('TotalEnvInteracts', t)
             logger.log_tabular('QVals', with_min_and_max=True)
             logger.log_tabular('LossPi', average_only=True)

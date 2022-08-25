@@ -3,10 +3,16 @@ import numpy as np
 import Pendulum
 import matplotlib.pyplot as plt
 import pickle
+import spinup
 import time
 
 # saved = tf.saved_model.load("right_leaning_pendulum/actor")
-saved = tf.keras.models.load_model("sac_PendulumEnv_seed=0_steps_per_epoch=1000_epochs=100_gamma=0.9_lr=0.001_batch_size=200_start_steps=1000_update_after=900_update_every=50")
+# saved = tf.keras.models.load_model("sac_PendulumEnv_seed=0_steps_per_epoch=1000_epochs=200_gamma=0.9_lr=0.001_batch_size=100_start_steps=1000_update_after=900_update_every=50")
+# saved = tf.keras.models.load_model("td3_saved")
+# saved = tf.keras.models.load_model("td3_pendulum_left/actor")
+# saved = tf.keras.models.load_model("td3_pendulum_anchored/actor")
+# saved = tf.keras.models.load_model("sac_left_pendulum/actor/deterministic_actor")
+saved = tf.keras.models.load_model("sac_anchored_pendulum/actor/deterministic_actor")
 # saved = tf.saved_model.load("pretty_please")
 
 actor = lambda x: saved(np.array([x]))[0]

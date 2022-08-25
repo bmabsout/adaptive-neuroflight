@@ -42,8 +42,8 @@ class ReplayBuffer:
 def sac(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(), seed=0, 
         steps_per_epoch=4000, epochs=100, replay_size=int(1e6), gamma=0.99, 
         polyak=0.995, lr=1e-3, alpha=0.2, batch_size=100, start_steps=10000, 
-        update_after=1000, update_every=50, num_test_episodes=10, num_opt_steps=20, max_ep_len=1000, 
-        logger_kwargs=dict(), save_freq=1, anchor_q=None):
+        update_after=1000, update_every=50, num_test_episodes=10, num_opt_steps=30, max_ep_len=1000, 
+        logger_kwargs=dict(), save_freq=1, on_save=lambda *_:(), anchor_q=None):
     """
     Soft Actor-Critic (SAC)
 
@@ -142,7 +142,7 @@ def sac(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(), seed=0,
     """
 
     logger = EpochLogger(**logger_kwargs)
-    logger.save_config(locals())
+    # logger.save_config(locals())
 
     tf.random.set_seed(seed)
     np.random.seed(seed)
@@ -211,7 +211,7 @@ def sac(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(), seed=0,
             q2_pi = tf.squeeze(ac.q2(tf.concat([obs, pi], axis=-1)), axis=-1)
             q_pi = tf.minimum(q1_pi, q2_pi)
             if anchor_q:
-                anchor_pi = tf.squeeze(anchor_q(tf.concat([obs, pi], axis=-1)), axis=-1)
+                anchor_pi = tf.squeeze(anchor_q(tf.concat([obs, pi], axis=-1)), axis=-1)*0.3
             else:
                 anchor_pi = q_pi*0
 
@@ -318,7 +318,7 @@ def sac(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(), seed=0,
 
             # Save model
             if (epoch % save_freq == 0) or (epoch == epochs-1):
-                ac.pi.deterministic_actor.save(f"sac_{env.unwrapped.__class__.__name__}_seed={seed}_steps_per_epoch={steps_per_epoch}_epochs={epochs}_gamma={gamma}_lr={lr}_batch_size={batch_size}_start_steps={start_steps}_update_after={update_after}_update_every={update_every}")
+                on_save(ac, epoch//save_freq, replay_buffer)
 
             # Test the performance of the deterministic version of the agent.
             test_agent()
