@@ -138,7 +138,7 @@ def generate_hypers():
 if __name__ == '__main__':
     # train_nf1(generate_hypers())
     signal(SIGINT, training_utils.handler)
-    train_n_times(6)
+    train_n_times(1)
     # actor = tf.keras.models.load_model(
     #     "/data/neuroflight/CODE/adaptive-neuroflight/neuroflight/XBee/transmission/ckpt_3/actor"
     # )

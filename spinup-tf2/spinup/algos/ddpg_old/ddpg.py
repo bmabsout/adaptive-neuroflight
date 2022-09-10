@@ -2,7 +2,7 @@ import numpy as np
 import tensorflow as tf
 import gym
 import time
-from spinup.algos.td3 import core
+from spinup.algos.ddpg_old import core
 from spinup.utils.logx import EpochLogger
 
 
@@ -37,19 +37,24 @@ class ReplayBuffer:
                     done=self.done_buf[idxs])
 
 """
+
 Deep Deterministic Policy Gradient (DDPG)
+
 """
-def td3(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(), seed=0, 
-         steps_per_epoch=5000, epochs=100, replay_size=int(1e6), gamma=0.99, 
-         polyak=0.995, pi_lr=1e-3, q_lr=1e-3, batch_size=100, start_steps=10000,  noise_clip=0.5,
-         act_noise=0.1, target_noise=0.2, max_ep_len=1000, logger_kwargs=dict(), save_freq=1, on_save=lambda *_:(), anchor_q=None):
+def ddpg(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs={"actor_hidden_sizes":[32,32], "critic_hidden_sizes":[400,300]}, seed=0, 
+         steps_per_epoch=5000, epochs=100, replay_size=int(1e5), gamma=0.9, 
+         polyak=0.995, pi_lr=1e-3, q_lr=1e-3, batch_size=100, start_steps=10000, 
+         act_noise=0.1, max_ep_len=1000, logger_kwargs=dict(), save_freq=1, on_save=lambda *_:()):
     """
+
     Args:
         env_fn : A function which creates a copy of the environment.
             The environment must satisfy the OpenAI Gym API.
+
         actor_critic: A function which takes in placeholder symbols 
             for state, ``x_ph``, and action, ``a_ph``, and returns the main 
             outputs from the agent's Tensorflow computation graph:
+
             ===========  ================  ======================================
             Symbol       Shape             Description
             ===========  ================  ======================================
@@ -62,41 +67,59 @@ def td3(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(), seed=0,
                                            | ``pi`` for states in ``x_ph``: 
                                            | q(x, pi(x)).
             ===========  ================  ======================================
+
         ac_kwargs (dict): Any kwargs appropriate for the actor_critic 
             function you provided to DDPG.
+
         seed (int): Seed for random number generators.
+
         steps_per_epoch (int): Number of steps of interaction (state-action pairs) 
             for the agent and the environment in each epoch.
+
         epochs (int): Number of epochs to run and train agent.
+
         replay_size (int): Maximum length of replay buffer.
+
         gamma (float): Discount factor. (Always between 0 and 1.)
+
         polyak (float): Interpolation factor in polyak averaging for target 
             networks. Target networks are updated towards main networks 
             according to:
+
             .. math:: \\theta_{\\text{targ}} \\leftarrow 
                 \\rho \\theta_{\\text{targ}} + (1-\\rho) \\theta
+
             where :math:`\\rho` is polyak. (Always between 0 and 1, usually 
             close to 1.)
+
         pi_lr (float): Learning rate for policy.
+
         q_lr (float): Learning rate for Q-networks.
+
         batch_size (int): Minibatch size for SGD.
+
         start_steps (int): Number of steps for uniform-random action selection,
             before running real policy. Helps exploration.
+
         act_noise (float): Stddev for Gaussian exploration noise added to 
             policy at training time. (At test time, no noise is added.)
+
         max_ep_len (int): Maximum length of trajectory / episode / rollout.
+
         logger_kwargs (dict): Keyword args for EpochLogger.
+
         save_freq (int): How often (in terms of gap between epochs) to save
             the current policy and value function.
+
     """
 
     logger = EpochLogger(**logger_kwargs)
-    # logger.save_config(locals())
+    logger.save_config(locals())
 
     tf.random.set_seed(seed)
     np.random.seed(seed)
 
-    env, test_env = env_fn(), env_fn()
+    env = env_fn()
     obs_dim = env.observation_space.shape[0]
     act_dim = env.action_space.shape[0]
 
@@ -105,16 +128,17 @@ def td3(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(), seed=0,
 
     # Main outputs from computation graph
     with tf.name_scope('main'):
-        pi_network, q1_network, q2_network = actor_critic(obs_dim, act_dim, **ac_kwargs)
+        pi_network, q_network = actor_critic(obs_dim, act_dim, **ac_kwargs)
     
     # Target networks
     with tf.name_scope('target'):
         # Note that the action placeholder going to actor_critic here is 
         # irrelevant, because we only need q_targ(s, pi_targ(s)).
-        pi_targ_network = actor_critic(obs_dim, act_dim, **ac_kwargs)[0]
+        pi_targ_network, q_targ_network  = actor_critic(obs_dim, act_dim, **ac_kwargs)
 
     # make sure network and target network is using the same weights
     pi_targ_network.set_weights(pi_network.get_weights())
+    q_targ_network.set_weights(q_targ_network.get_weights())
 
     # Experience buffer
     replay_buffer = ReplayBuffer(obs_dim=obs_dim, act_dim=act_dim, size=replay_size)
@@ -128,44 +152,35 @@ def td3(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(), seed=0,
     def target_update():
         for v_main, v_targ in zip(pi_network.trainable_variables, pi_targ_network.trainable_variables):
             v_targ.assign(polyak*v_targ + (1-polyak)*v_main)
+        for v_main, v_targ in zip(q_network.trainable_variables, q_targ_network.trainable_variables):
+            v_targ.assign(polyak*v_targ + (1-polyak)*v_main)
 
     @tf.function
     def q_update(obs1, obs2, acts, rews, dones):
-        pi_targ = act_limit * pi_targ_network(obs2)
-        epsilon = tf.clip_by_value(tf.random.normal(pi_targ.shape) * target_noise, -noise_clip, noise_clip)
-        a2 = tf.clip_by_value(pi_targ + epsilon, -act_limit, act_limit)
-        q1_pi_targ = tf.squeeze(q1_network(tf.concat([obs2, a2], axis=-1)), axis=1)
-        q2_pi_targ = tf.squeeze(q2_network(tf.concat([obs2, a2], axis=-1)), axis=1)
-        q_pi_targ = tf.minimum(q1_pi_targ, q2_pi_targ)
-        backup = rews + gamma * (1 - dones) * q_pi_targ
-        # tf.print(backup)
         with tf.GradientTape() as tape:
-            q1 = tf.squeeze(q1_network(tf.concat([obs1, acts], axis=-1)), axis=1)
-            q2 = tf.squeeze(q2_network(tf.concat([obs1, acts], axis=-1)), axis=1)
-            q1_loss = tf.reduce_mean((q1-backup)**2)
-            q2_loss = tf.reduce_mean((q2-backup)**2)
-            # tf.print("q1:",q1)
-            # tf.print("backup:",backup)
-            q_loss = q1_loss + q2_loss
-        qs_trainable_vars = q1_network.trainable_variables + q2_network.trainable_variables
-        grads = tape.gradient(q_loss, qs_trainable_vars)
-        q_optimizer.apply_gradients(zip(grads, qs_trainable_vars))
-        return q_loss, q1
+            q = tf.squeeze(q_network(tf.concat([obs1, acts], axis=-1)), axis=1)
+            pi_targ = act_limit * pi_targ_network(obs2)
+            q_pi_targ = tf.squeeze(q_targ_network(tf.concat([obs2, pi_targ], axis=-1)), axis=1)
+            backup = tf.stop_gradient(rews + gamma * (1 - dones) * q_pi_targ)
+            q_loss = tf.reduce_mean((q-backup)**2)
+        grads = tape.gradient(q_loss, q_network.trainable_variables)
+        grads_and_vars = zip(grads, q_network.trainable_variables)
+        q_optimizer.apply_gradients(grads_and_vars)
+        return q_loss, q
 
     @tf.function
     def pi_update(obs):
         with tf.GradientTape() as tape:
             pi = act_limit * pi_network(obs)
-            q_pi = tf.squeeze(q1_network(tf.concat([obs, pi], axis=-1)), axis=1)
-            anchor_loss = 0.0
-            if anchor_q:
-                anchor_q_pi = tf.squeeze(anchor_q(tf.concat([obs, pi], axis=-1)), axis=1)
-                anchor_loss = -tf.reduce_mean(anchor_q_pi)
-            pi_loss = -tf.reduce_mean(q_pi)*3 + anchor_loss
+            q_pi = tf.squeeze(q_network(tf.concat([obs, pi], axis=-1)), axis=1)
+            max_q_val = 1/(1-gamma)
+            increase_q_val = 1.0 - max_q_val/(max_q_val + tf.reduce_mean(q_pi))
+            avoid_extremes = (tf.reduce_mean((1.0 - tf.abs(pi))**0.15))**0.1
+            pi_loss = 1.0-(increase_q_val**10.0)*avoid_extremes
         grads = tape.gradient(pi_loss, pi_network.trainable_variables)
         grads_and_vars = zip(grads, pi_network.trainable_variables)
         pi_optimizer.apply_gradients(grads_and_vars)
-        return pi_loss
+        return pi_loss, avoid_extremes, increase_q_val
 
     def get_action(o, noise_scale):
         a = act_limit * pi_network(tf.constant(o.reshape(1,-1))).numpy()[0]
@@ -173,14 +188,18 @@ def td3(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(), seed=0,
         return np.clip(a, -act_limit, act_limit)
 
     def test_agent(n=10):
+        print("testing agents")
+        sum_step_return = 0
         for j in range(n):
-            o, r, d, ep_ret, ep_len = test_env.reset(), 0, False, 0, 0
+            o, r, d, ep_ret, ep_len = env.reset(), 0, False, 0, 0
             while not(d or (ep_len == max_ep_len)):
                 # Take deterministic actions at test time (noise_scale=0)
-                o, r, d, _ = test_env.step(get_action(o, 0))
+                o, r, d, _ = env.step(get_action(o, 0))
                 ep_ret += r
                 ep_len += 1
-            logger.store(TestEpRet=ep_ret, TestEpLen=ep_len)
+            # logger.store(TestEpRet=ep_ret, TestEpLen=ep_len)
+            sum_step_return += ep_ret/ep_len
+        return sum_step_return/n
 
     start_time = time.time()
     o, r, d, ep_ret, ep_len = env.reset(), 0, False, 0, 0
@@ -234,8 +253,8 @@ def td3(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(), seed=0,
                 logger.store(LossQ=outs[0].numpy(), QVals=outs[1].numpy())
 
                 # Policy update
-                outs = pi_update(obs1)
-                logger.store(LossPi=outs.numpy())
+                pi_loss, avoid_extremes, increase_q_val = pi_update(obs1)
+                logger.store(LossPi=pi_loss.numpy(), NormQ=increase_q_val, AvoidExtremes=avoid_extremes)
 
                 # target update
                 target_update()
@@ -248,9 +267,7 @@ def td3(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(), seed=0,
             epoch = t // steps_per_epoch
 
             # Save model
-            if (epoch % save_freq == 0) or (epoch == epochs-1):
-                on_save(pi_network, q1_network, epoch//save_freq, replay_buffer)
-                # logger.save_state({'env': env}, None)
+            #     logger.save_state({'env': env}, None)
 
             # Test the performance of the deterministic version of the agent.
             # test_agent()
@@ -265,8 +282,14 @@ def td3(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(), seed=0,
             logger.log_tabular('QVals', with_min_and_max=True)
             logger.log_tabular('LossPi', average_only=True)
             logger.log_tabular('LossQ', average_only=True)
+            logger.log_tabular('NormQ', average_only=True)
+            logger.log_tabular('AvoidExtremes', average_only=True)
             logger.log_tabular('Time', time.time()-start_time)
+            logger.log_tabular('Reg loss', tf.reduce_mean(pi_network.losses))
             logger.dump_tabular()
+            
+            if (epoch % save_freq == 0) or (epoch == epochs-1):
+                on_save(pi_network, epoch//save_freq)
     return pi_network
 
 if __name__ == '__main__':
@@ -274,17 +297,17 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--env', type=str, default='HalfCheetah-v2')
     parser.add_argument('--hid', type=int, default=300)
-    parser.add_argument('--l', type=int, default=1)
+    parser.add_argument('--l', type=int, default=2)
     parser.add_argument('--gamma', type=float, default=0.99)
     parser.add_argument('--seed', '-s', type=int, default=0)
     parser.add_argument('--epochs', type=int, default=50)
-    parser.add_argument('--exp_name', type=str, default='td3')
+    parser.add_argument('--exp_name', type=str, default='ddpg_old')
     args = parser.parse_args()
 
     from spinup.utils.run_utils import setup_logger_kwargs
     logger_kwargs = setup_logger_kwargs(args.exp_name, args.seed)
 
-    td3(lambda : gym.make(args.env), actor_critic=core.mlp_actor_critic,
+    ddpg(lambda : gym.make(args.env), actor_critic=core.mlp_actor_critic,
          ac_kwargs=dict(hidden_sizes=[args.hid]*args.l),
          gamma=args.gamma, seed=args.seed, epochs=args.epochs,
          logger_kwargs=logger_kwargs)

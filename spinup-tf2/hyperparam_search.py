@@ -10,7 +10,7 @@ random.seed(0)
 from train_nf1_ddpg_old import train_nf1
 # from spinup.utils.run_utils import setup_logger_kwargs
 
-num_step = 300_000
+num_step = 150_000
 
 hyperparams_possibilities = {
     "seed":            lambda: int(time.time()* 1e5) % int(1e6),
@@ -25,6 +25,41 @@ hyperparams_possibilities = {
     "max_ep_len":      lambda: 10000,
 }
 
+hyperparams_possibilities_td3 = {
+    "seed":            lambda: int(time.time()* 1e5) % int(1e6),
+    "steps_per_epoch": lambda: 10000,
+    "replay_size":     lambda: random.choice([100_000, 500_000, 1000_000, 5000_000]),
+    "gamma":           lambda: random.choice([0.8, 0.9, 0.95, 0.99]),
+    "polyak":          lambda: random.choice([0.5, 0.9, 0.95, 0.99, 0.995]),
+    "pi_lr":           lambda: random.choice([1e-4, 5e-4, 1e-3, 3e-3, 5e-3]),
+    "q_lr":            lambda: random.choice([1e-4, 5e-4, 1e-3, 3e-3, 5e-3]),
+    "batch_size":      lambda: random.choice([50, 100, 200, 400]),
+    "act_noise":       lambda: random.choice([0.01, 0.05, 0.1, 0.2]),
+    "max_ep_len":      lambda: 10000,
+}
+
+hyperparams_possibilities_sac = {
+    "seed":            lambda: int(time.time()* 1e5) % int(1e6),
+    "steps_per_epoch": lambda: 10000,
+    "replay_size":     lambda: random.choice([100_000, 500_000, 1000_000, 5000_000]),
+    "gamma":           lambda: random.choice([0.8, 0.9, 0.95, 0.99]),
+    "polyak":          lambda: random.choice([0.5, 0.9, 0.95, 0.99, 0.995]),
+    "lr":              lambda: random.choice([1e-4, 5e-4, 1e-3, 3e-3, 5e-3]),
+    "alpha":           lambda: random.choice([0.01, 0.05, 0.1, 0.2]),
+    "batch_size":      lambda: random.choice([50, 100, 200, 400]),
+    "max_ep_len":      lambda: 10000,
+}
+hyperparams_possibilities_ppo = {
+    "seed":            lambda: int(time.time()* 1e5) % int(1e6),
+    "steps_per_epoch": lambda: 10000,
+    "clip_ratio":      lambda: random.choice([0.0, 0.05, 0.1, 0.2]),
+    "gamma":           lambda: random.choice([0.8, 0.9, 0.95, 0.99]),
+    "pi_lr":           lambda: random.choice([1e-4, 5e-4, 1e-3, 3e-3, 5e-3]),
+    "vf_lr":           lambda: random.choice([1e-4, 5e-4, 1e-3, 3e-3, 5e-3]),
+    "lam":             lambda: random.choice([0.9, 0.97, 0.99, 0.995]),
+    "max_ep_len":      lambda: 10000,
+}
+
 
 def sample(hyperparams):
     sampled_params = {key: sampler() for key, sampler in hyperparams.items()}
@@ -34,7 +69,7 @@ def sample(hyperparams):
 
 def search():
     for i in range(100):
-        hyperparams = sample(hyperparams_possibilities)
+        hyperparams = sample(hyperparams_possibilities_sac)
         with open('hyperparams.txt', 'a') as file:
             os.system("killall gzserver")
             file.write(f"{hyperparams}: {train_nf1(**hyperparams)}\n")

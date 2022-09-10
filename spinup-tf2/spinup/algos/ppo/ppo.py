@@ -92,7 +92,7 @@ with early stopping based on approximate KL
 def ppo(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(), seed=0, 
         steps_per_epoch=4000, epochs=50, gamma=0.99, clip_ratio=0.2, pi_lr=1e-3,
         vf_lr=1e-3, train_pi_iters=80, train_v_iters=80, lam=0.97, max_ep_len=1000,
-        target_kl=0.01, logger_kwargs=dict(), save_freq=10):
+        target_kl=0.01, logger_kwargs=dict(), save_freq=10, on_save=lambda *_:()):
     """
 
     Args:
@@ -284,6 +284,9 @@ def ppo(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(), seed=0,
                     log_flag=True
                     o, r, d, ep_ret, ep_len = env.reset(), 0, False, 0, 0
 
+        if (epoch + 1)%save_freq == 0:
+            on_save(model.actor_mlp, epoch//save_freq)
+
         # Perform PPO update!
         obs, acs, advs, rets, logp_olds = buf.get()
 
@@ -292,12 +295,12 @@ def ppo(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(), seed=0,
         advs = tf.constant(advs)
         rets = tf.constant(rets)
         logp_olds = tf.constant(logp_olds)
-      
+
         pi_loss, v_loss, kl, ent, delta_pi_loss, delta_v_loss, stopIter = update(obs, acs, advs, rets, logp_olds)
 
         logger.store(LossPi=pi_loss.numpy(), LossV=v_loss.numpy(), KL=kl.numpy(), Entropy=ent.numpy(), DeltaLossPi=delta_pi_loss.numpy(), DeltaLossV=delta_v_loss.numpy(), StopIter=stopIter.numpy())
-        model.actor_mlp.save("pretty_please")
-        print("SAVED")
+        # model.actor_mlp.save("pretty_please")
+        
         if log_flag:
             logger.log_tabular('Epoch', epoch)
             logger.log_tabular('EpRet', with_min_and_max=True)
@@ -314,6 +317,8 @@ def ppo(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(), seed=0,
             logger.log_tabular('Time', time.time()-start_time)
             logger.dump_tabular()
             log_flag = False
+
+    return model.actor_mlp
 
 
 if __name__ == '__main__':

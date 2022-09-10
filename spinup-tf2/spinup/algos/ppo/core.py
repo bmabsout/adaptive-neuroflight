@@ -103,7 +103,7 @@ class Mlp_Gaussian_Actor_Critic(tf.keras.Model):
     return tf.squeeze(self.critic_mlp(observations), axis=1)
 
 
-def mlp_actor_critic(ob_space, ac_space, hidden_sizes=(64,64), activation=tf.tanh, output_activation=tf.tanh):
+def mlp_actor_critic(ob_space, ac_space, hidden_sizes=(64,64), activation="relu", output_activation=tf.tanh):
   if isinstance(ac_space, Box):
     model = Mlp_Gaussian_Actor_Critic(ob_space, ac_space, hidden_sizes, activation, output_activation)
   elif isinstance(ac_space, Discrete):

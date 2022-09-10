@@ -40,12 +40,12 @@ def save_flight(env, seed, actor, save_location, num_episodes=3):
                            dbg=env.dbg)
         flight_log.save(episode_index, ob.shape[0])
     return rewards_sum/num_total_steps
-    
+
 def train_nf1(seed=int(time.time()* 1e5) % int(1e6), **kwargs):
     signal(SIGINT, training_utils.handler)
 
     
-    training_dir = training_utils.get_training_dir('tf2_ddpg', seed)
+    training_dir = training_utils.get_training_dir('tf2_sac', seed)
     print ("Storing results to ", training_dir)
 
 
@@ -56,18 +56,27 @@ def train_nf1(seed=int(time.time()* 1e5) % int(1e6), **kwargs):
     env_id = "gymfc_perlin_discontinuous-v3"
     env = gym.make(env_id)
     env.seed(seed)
-
-
     env.noise_sigma = 1
 
     test_env = gym.make(env_id)
     test_env.noise_sigma = 1
-    def on_save(actor, ckpt_id):
+    def on_save(actor, critic, ckpt_id, rb):
         return save_flight(test_env, seed, actor, os.path.join(ckpt_dir, f"ckpt_{ckpt_id}"))
 
-    final_actor = spinup.ddpg_old(
+    def on_save_sac(ac, ckpt_id, rb):
+        return save_flight(test_env, seed, ac.pi.deterministic_actor, os.path.join(ckpt_dir, f"ckpt_{ckpt_id}"))
+
+    def on_save_ppo(actor, ckpt_id):
+        return save_flight(test_env, seed, actor, os.path.join(ckpt_dir, f"ckpt_{ckpt_id}"))
+
+    final_actor = spinup.sac(
         lambda : env,
-        on_save=on_save,
+        # hp=spinup.algos.ddpg.ddpg.HyperParams(ac_kwargs={
+        #     "actor_hidden_sizes":(32,32),
+        #     "critic_hidden_sizes":(400,300),
+        #     "obs_normalizer": np.array([500.0, 500.0, 500.0, 500.0, 500.0, 500.0, 10.0, 10.0, 10.0, 1.0, 1.0, 1.0, 1.0])
+        # },**kwargs),
+        on_save=on_save_sac,
         **kwargs
     )
 

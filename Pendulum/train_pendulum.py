@@ -12,10 +12,10 @@ def on_save(actor, q_network, epoch, replay_buffer):
             pickle.dump( replay_buffer, replay_file)
 
 def existing_actor_critic(*args, **kwargs):
-    return tf.keras.models.load_model("right_leaning_pendulum/actor"), tf.keras.models.load_model("right_leaning_pendulum/critic")
+    return tf.keras.models.load_model("pendulum/actor"), tf.keras.models.load_model("pendulum/critic")
 
-rl_alg.ddpg(lambda: Pendulum.PendulumEnv(g=10.0, setpoint=np.pi/4.0)
-	, hp = rl_alg.HyperParams(
+rl_alg.ddpg(lambda: Pendulum.PendulumEnv(g=10.0, setpoint=np.pi/5.0)
+    , hp = rl_alg.HyperParams(
         seed=int(time.time()* 1e5) % int(1e6),
         steps_per_epoch=1000,
         ac_kwargs={
@@ -33,10 +33,11 @@ rl_alg.ddpg(lambda: Pendulum.PendulumEnv(g=10.0, setpoint=np.pi/4.0)
         batch_size=200,
         act_noise=0.1,
         max_ep_len=200,
-        epochs=20,
+        epochs=50,
         train_every=50,
         train_steps=30,
     )
-	, on_save=on_save
-    # , anchor_q=tf.keras.models.load_model("right_leaning_pendulum/critic")
+    , on_save=on_save
+    # , anchor_q=tf.keras.models.load_model("pendulum/critic")
+    # , actor_critic=existing_actor_critic
 )

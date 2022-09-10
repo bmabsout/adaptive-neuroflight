@@ -211,7 +211,7 @@ def sac(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(), seed=0,
             q2_pi = tf.squeeze(ac.q2(tf.concat([obs, pi], axis=-1)), axis=-1)
             q_pi = tf.minimum(q1_pi, q2_pi)
             if anchor_q:
-                anchor_pi = tf.squeeze(anchor_q(tf.concat([obs, pi], axis=-1)), axis=-1)*0.3
+                anchor_pi = tf.squeeze(anchor_q(tf.concat([obs, pi], axis=-1)), axis=-1)
             else:
                 anchor_pi = q_pi*0
 
@@ -321,19 +321,21 @@ def sac(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(), seed=0,
                 on_save(ac, epoch//save_freq, replay_buffer)
 
             # Test the performance of the deterministic version of the agent.
-            test_agent()
+            # test_agent()
 
             # Log info about epoch
             logger.log_tabular('Epoch', epoch)
             logger.log_tabular('EpRet', with_min_and_max=True)
-            logger.log_tabular('TestEpRet', with_min_and_max=True)
+            # logger.log_tabular('TestEpRet', with_min_and_max=True)
             logger.log_tabular('EpLen', average_only=True)
-            logger.log_tabular('TestEpLen', average_only=True)
+            # logger.log_tabular('TestEpLen', average_only=True)
             logger.log_tabular('TotalEnvInteracts', t)
             logger.log_tabular('LossPi', average_only=True)
             logger.log_tabular('LossQ', average_only=True)
             logger.log_tabular('Time', time.time()-start_time)
             logger.dump_tabular()
+
+    return ac.pi.deterministic_actor
 
 if __name__ == '__main__':
     import argparse

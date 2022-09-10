@@ -305,18 +305,18 @@ def ddpg(env_fn, hp: HyperParams=HyperParams(),actor_critic=core.mlp_actor_criti
             # objective for maintaining an output of -0.8
 
             reg_c = tf.squeeze(p_mean(tf.stack([spatial_c, temporal_c, before_tanh_c],axis=1), 0.0))
-            # all_c = p_to_min(tf.stack([q_c, reg_c]), q=0.0)
-            all_c = p_mean(tf.stack([ scale_gradient(aq_c, 3e2), scale_gradient(q_c, 3e2),scale_gradient(before_tanh_c, 3.0)], axis=1), 0.0)
+            # all_c = p_to_min(tf.stack([q_c, tf.stack([reg_c])]), q=0.0)
+            all_c = p_mean(tf.stack([ scale_gradient(aq_c, 3e2), scale_gradient(q_c, 3e2)], axis=1), 0.0)
             # all_c = q_c + 0.008*pi_diffs_c + 0.005*pi_bar_c + 0.025*center_c
-            if debug:
-                tf.print("temporal_c", temporal_c)
-                tf.print("spatial_c", spatial_c)
-                tf.print("center_c", center_c)
-                tf.print("pi_weight_c", pi_weight_c)
-                tf.print("before_tanh_c", before_tanh_c)
-                tf.print("reg_c", reg_c)
-                tf.print("aq_c", aq_c)
-                tf.print("q_c", q_c)
+            # if debug:
+            #     tf.print("temporal_c", temporal_c)
+            #     tf.print("spatial_c", spatial_c)
+            #     tf.print("center_c", center_c)
+            #     tf.print("pi_weight_c", pi_weight_c)
+            #     tf.print("before_tanh_c", before_tanh_c)
+            #     tf.print("reg_c", reg_c)
+            #     tf.print("aq_c", aq_c)
+            #     tf.print("q_c", q_c)
             pi_loss = 1.0 - all_c
         grads = tape.gradient(pi_loss, pi_network.trainable_variables)
         grads_and_vars = zip(grads, pi_network.trainable_variables)
@@ -457,6 +457,7 @@ def ddpg(env_fn, hp: HyperParams=HyperParams(),actor_critic=core.mlp_actor_criti
             # logger.log_tabular('LossAQ', average_only=True)
 
             logger.dump_tabular()
+    return pi_network
 
 if __name__ == '__main__':
     import argparse
